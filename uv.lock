@@ -55,6 +55,15 @@ wheels = [
 ]
 
 [[package]]
+name = "ast2json"
+version = "0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/dc/7c11f80a782f051beafcc4707dd54888e7fcdeea5afa9236aa2e2cfa7073/ast2json-0.4.tar.gz", hash = "sha256:b5cc42e97c29b77845b5d4ec32e74dcac538fb4c61a7faa570964bc96b19aeb7", size = 4734 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/ef/cc0efc91e4f0f98780ca77f073578f9b7e5e687c5577bdc5537a3b2d7bf3/ast2json-0.4-py2.py3-none-any.whl", hash = "sha256:df60746b65384a7fdfc7ef29a6f703ef9cc6e643586e7636e0a44a9f47901810", size = 5495 },
+]
+
+[[package]]
 name = "black"
 version = "24.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -508,6 +517,7 @@ source = { editable = "." }
 dependencies = [
     { name = "adam-atan2" },
     { name = "argdantic" },
+    { name = "ast2json" },
     { name = "coolname" },
     { name = "einops" },
     { name = "huggingface-hub" },
@@ -519,6 +529,7 @@ dependencies = [
     { name = "omegaconf" },
     { name = "pydantic", version = "2.10.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "pydantic", version = "2.11.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "pyyaml" },
     { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "tqdm" },
@@ -542,6 +553,7 @@ dev = [
 requires-dist = [
     { name = "adam-atan2" },
     { name = "argdantic" },
+    { name = "ast2json", specifier = ">=0.4" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "coolname" },
     { name = "einops" },
@@ -553,6 +565,7 @@ requires-dist = [
     { name = "omegaconf" },
     { name = "pydantic" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "torch" },
     { name = "tqdm" },
     { name = "wandb" },

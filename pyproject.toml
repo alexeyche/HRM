@@ -24,6 +24,8 @@ dependencies = [
     "hydra-core",
     "huggingface_hub",
     "numpy>=1.24.4",
+    "ast2json>=0.4",
+    "pyyaml>=6.0.2",
 ]
 
 [project.optional-dependencies]

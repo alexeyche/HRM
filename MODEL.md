@@ -31,6 +31,29 @@ Dict[K,V]       # Key-value mappings: Dict[str,int], Dict[int,List[str]]
 Set[T]          # Unique collections: Set[int], Set[str]
 ```
 
+#### Program example
+
+Let's use yaml to describe the program.
+
+```yaml
+name: sum_up_to_n
+description: "Sum up all numbers up to the input number N"
+inputs:
+  - type: int
+    description: "The input number N"
+outputs:
+  - type: int
+    description: "The sum of all numbers up to the input number N"
+examples:
+  - input: 10
+    output: 55
+  - input: 20
+    output: 210
+  - input: 30
+    output: 465
+```
+
+
 ## Outputs
 
 ## Output Structure: Graph-Based AST Generation

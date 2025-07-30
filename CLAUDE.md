@@ -18,6 +18,12 @@ The system generates programs as graph-based AST structures rather than token se
 # Install Python dependencies
 uv pip install -e .
 
+# run python script to test something
+uv run python ...
+
+# add depdencies
+uv add ...
+
 # Login to Weights & Biases for experiment tracking
 wandb login
 ```
@@ -120,7 +126,7 @@ The adapted architecture maintains HRM's strengths (hierarchical reasoning, smal
 ## Development strategy
 
 1. Let's start with very simple tasks like sum, multiply, divide, and then move on to more complex tasks like sorting, searching, and graph algorithms.
-
+- very simple programs like sum_up_to_n, multiply_up_to_n, divide_up_to_n, etc.
 ...
 
 
