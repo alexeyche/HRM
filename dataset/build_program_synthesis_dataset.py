@@ -646,15 +646,15 @@ def build_dataset(config: DataProcessConfig):
     for split_name, results, split_dir in [("train", train_results, train_dir), ("test", test_results, test_dir)]:
         if len(results["inputs"]) == 0:
             continue
-
+        results_np = {}
         for key in ["inputs", "labels"]:
-            results[key] = np.stack(results[key], axis=0)
+            results_np[key] = np.stack(results[key], axis=0)
 
         for key in ["program_identifiers", "program_indices", "group_indices"]:
-            results[key] = np.array(results[key], dtype=np.int32)
+            results_np[key] = np.array(results[key], dtype=np.int32)
 
         # Save numpy arrays
-        for key, data in results.items():
+        for key, data in results_np.items():
             np.save(os.path.join(split_dir, f"all__{key}.npy"), data)
 
         # Create metadata
@@ -677,9 +677,9 @@ def build_dataset(config: DataProcessConfig):
             json.dump(metadata.model_dump(), f, indent=2)
 
         print(f"{split_name.capitalize()} set:")
-        print(f"  Total examples: {len(results['inputs'])}")
-        print(f"  Input shape: {results['inputs'].shape}")
-        print(f"  Label shape: {results['labels'].shape}")
+        print(f"  Total examples: {len(results_np['inputs'])}")
+        print(f"  Input shape: {results_np['inputs'].shape}")
+        print(f"  Label shape: {results_np['labels'].shape}")
 
     print(f"Dataset saved to: {config.output_dir}")
     print(f"Generated {program_id} individual program files")
