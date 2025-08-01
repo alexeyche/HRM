@@ -161,6 +161,303 @@ PROGRAM_TEMPLATES = {
     if n <= 1:
         return 1
     return n * program(n - 1)"""
+    },
+
+    "power_of_two": {
+        "description": "Calculate 2 to the power of n",
+        "inputs": [{"type": "int", "description": "The exponent"}],
+        "outputs": [{"type": "int", "description": "2^n"}],
+        "base_examples": [
+            {"input": 0, "output": 1},
+            {"input": 1, "output": 2},
+            {"input": 3, "output": 8},
+            {"input": 4, "output": 16},
+            {"input": 5, "output": 32}
+        ],
+        "implementation": """def program(n):
+    return 2 ** n"""
+    },
+
+    "square": {
+        "description": "Calculate the square of a number",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The square of the number"}],
+        "base_examples": [
+            {"input": 0, "output": 0},
+            {"input": 1, "output": 1},
+            {"input": 3, "output": 9},
+            {"input": -4, "output": 16},
+            {"input": 5, "output": 25}
+        ],
+        "implementation": """def program(n):
+    return n * n"""
+    },
+
+    "cube": {
+        "description": "Calculate the cube of a number",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The cube of the number"}],
+        "base_examples": [
+            {"input": 0, "output": 0},
+            {"input": 1, "output": 1},
+            {"input": 2, "output": 8},
+            {"input": -3, "output": -27},
+            {"input": 4, "output": 64}
+        ],
+        "implementation": """def program(n):
+    return n * n * n"""
+    },
+
+    "min_of_two": {
+        "description": "Return the smaller of two numbers",
+        "inputs": [
+            {"type": "int", "description": "First number"},
+            {"type": "int", "description": "Second number"}
+        ],
+        "outputs": [{"type": "int", "description": "The smaller number"}],
+        "base_examples": [
+            {"input": [5, 3], "output": 3},
+            {"input": [10, 15], "output": 10},
+            {"input": [-2, -5], "output": -5},
+            {"input": [0, 0], "output": 0},
+            {"input": [7, 7], "output": 7}
+        ],
+        "implementation": """def program(a, b):
+    return a if a < b else b"""
+    },
+
+    "is_positive": {
+        "description": "Check if a number is positive",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "bool", "description": "True if positive, False otherwise"}],
+        "base_examples": [
+            {"input": 5, "output": True},
+            {"input": -3, "output": False},
+            {"input": 0, "output": False},
+            {"input": 10, "output": True},
+            {"input": -1, "output": False}
+        ],
+        "implementation": """def program(n):
+    return n > 0"""
+    },
+
+    "is_negative": {
+        "description": "Check if a number is negative",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "bool", "description": "True if negative, False otherwise"}],
+        "base_examples": [
+            {"input": -5, "output": True},
+            {"input": 3, "output": False},
+            {"input": 0, "output": False},
+            {"input": -10, "output": True},
+            {"input": 1, "output": False}
+        ],
+        "implementation": """def program(n):
+    return n < 0"""
+    },
+
+    "double": {
+        "description": "Double a number (multiply by 2)",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The number multiplied by 2"}],
+        "base_examples": [
+            {"input": 0, "output": 0},
+            {"input": 3, "output": 6},
+            {"input": -4, "output": -8},
+            {"input": 10, "output": 20},
+            {"input": -1, "output": -2}
+        ],
+        "implementation": """def program(n):
+    return n * 2"""
+    },
+
+    "half": {
+        "description": "Divide a number by 2 (integer division)",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The number divided by 2"}],
+        "base_examples": [
+            {"input": 0, "output": 0},
+            {"input": 6, "output": 3},
+            {"input": -8, "output": -4},
+            {"input": 10, "output": 5},
+            {"input": 5, "output": 2}
+        ],
+        "implementation": """def program(n):
+    return n // 2"""
+    },
+
+    "add_ten": {
+        "description": "Add 10 to a number",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The number plus 10"}],
+        "base_examples": [
+            {"input": 0, "output": 10},
+            {"input": 5, "output": 15},
+            {"input": -3, "output": 7},
+            {"input": 10, "output": 20},
+            {"input": -15, "output": -5}
+        ],
+        "implementation": """def program(n):
+    return n + 10"""
+    },
+
+    "subtract_five": {
+        "description": "Subtract 5 from a number",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The number minus 5"}],
+        "base_examples": [
+            {"input": 10, "output": 5},
+            {"input": 5, "output": 0},
+            {"input": 0, "output": -5},
+            {"input": -3, "output": -8},
+            {"input": 15, "output": 10}
+        ],
+        "implementation": """def program(n):
+    return n - 5"""
+    },
+
+    "is_zero": {
+        "description": "Check if a number is zero",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "bool", "description": "True if zero, False otherwise"}],
+        "base_examples": [
+            {"input": 0, "output": True},
+            {"input": 1, "output": False},
+            {"input": -1, "output": False},
+            {"input": 10, "output": False},
+            {"input": -5, "output": False}
+        ],
+        "implementation": """def program(n):
+    return n == 0"""
+    },
+
+    "sum_of_two": {
+        "description": "Add two numbers together",
+        "inputs": [
+            {"type": "int", "description": "First number"},
+            {"type": "int", "description": "Second number"}
+        ],
+        "outputs": [{"type": "int", "description": "The sum of the two numbers"}],
+        "base_examples": [
+            {"input": [3, 5], "output": 8},
+            {"input": [0, 0], "output": 0},
+            {"input": [-2, 7], "output": 5},
+            {"input": [10, -3], "output": 7},
+            {"input": [-5, -3], "output": -8}
+        ],
+        "implementation": """def program(a, b):
+    return a + b"""
+    },
+
+    "difference": {
+        "description": "Calculate the difference between two numbers (a - b)",
+        "inputs": [
+            {"type": "int", "description": "First number"},
+            {"type": "int", "description": "Second number"}
+        ],
+        "outputs": [{"type": "int", "description": "The difference (a - b)"}],
+        "base_examples": [
+            {"input": [8, 3], "output": 5},
+            {"input": [5, 5], "output": 0},
+            {"input": [2, 7], "output": -5},
+            {"input": [10, -3], "output": 13},
+            {"input": [-5, -2], "output": -3}
+        ],
+        "implementation": """def program(a, b):
+    return a - b"""
+    },
+
+    "product": {
+        "description": "Multiply two numbers together",
+        "inputs": [
+            {"type": "int", "description": "First number"},
+            {"type": "int", "description": "Second number"}
+        ],
+        "outputs": [{"type": "int", "description": "The product of the two numbers"}],
+        "base_examples": [
+            {"input": [3, 4], "output": 12},
+            {"input": [0, 5], "output": 0},
+            {"input": [-2, 3], "output": -6},
+            {"input": [7, -2], "output": -14},
+            {"input": [-3, -4], "output": 12}
+        ],
+        "implementation": """def program(a, b):
+    return a * b"""
+    },
+
+    "count_up_to_n": {
+        "description": "Count the number of integers from 1 to n (inclusive)",
+        "inputs": [{"type": "int", "description": "The upper limit"}],
+        "outputs": [{"type": "int", "description": "The count (which is just n)"}],
+        "base_examples": [
+            {"input": 1, "output": 1},
+            {"input": 5, "output": 5},
+            {"input": 10, "output": 10},
+            {"input": 0, "output": 0},
+            {"input": 3, "output": 3}
+        ],
+        "implementation": """def program(n):
+    return n if n >= 0 else 0"""
+    },
+
+    "is_greater_than_ten": {
+        "description": "Check if a number is greater than 10",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "bool", "description": "True if greater than 10, False otherwise"}],
+        "base_examples": [
+            {"input": 15, "output": True},
+            {"input": 10, "output": False},
+            {"input": 5, "output": False},
+            {"input": 11, "output": True},
+            {"input": -5, "output": False}
+        ],
+        "implementation": """def program(n):
+    return n > 10"""
+    },
+
+    "remainder_by_three": {
+        "description": "Calculate the remainder when dividing by 3",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The remainder when divided by 3"}],
+        "base_examples": [
+            {"input": 9, "output": 0},
+            {"input": 10, "output": 1},
+            {"input": 11, "output": 2},
+            {"input": 7, "output": 1},
+            {"input": 6, "output": 0}
+        ],
+        "implementation": """def program(n):
+    return n % 3"""
+    },
+
+    "is_divisible_by_five": {
+        "description": "Check if a number is divisible by 5",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "bool", "description": "True if divisible by 5, False otherwise"}],
+        "base_examples": [
+            {"input": 10, "output": True},
+            {"input": 15, "output": True},
+            {"input": 7, "output": False},
+            {"input": 0, "output": True},
+            {"input": -5, "output": True}
+        ],
+        "implementation": """def program(n):
+    return n % 5 == 0"""
+    },
+
+    "triple": {
+        "description": "Multiply a number by 3",
+        "inputs": [{"type": "int", "description": "The input number"}],
+        "outputs": [{"type": "int", "description": "The number multiplied by 3"}],
+        "base_examples": [
+            {"input": 0, "output": 0},
+            {"input": 2, "output": 6},
+            {"input": -3, "output": -9},
+            {"input": 5, "output": 15},
+            {"input": -1, "output": -3}
+        ],
+        "implementation": """def program(n):
+    return n * 3"""
     }
 }
 
@@ -447,6 +744,126 @@ def generate_program_examples(template_name: str, template: Dict[str, Any], num_
             output = 1
             for i in range(1, n + 1):
                 output *= i
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "power_of_two":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(0, 10)  # Keep small for powers
+            output = 2 ** n
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "square":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-10, 11)
+            output = n * n
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "cube":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-5, 6)  # Keep smaller range for cubes
+            output = n * n * n
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "min_of_two":
+        for _ in range(num_examples - len(examples)):
+            a, b = np.random.randint(-10, 20, 2)
+            output = min(a, b)
+            examples.append({"input": [a, b], "output": output})
+
+    elif template_name == "is_positive":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-10, 20)
+            output = n > 0
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "is_negative":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-10, 20)
+            output = n < 0
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "double":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-20, 21)
+            output = n * 2
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "half":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-20, 21)
+            output = n // 2
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "add_ten":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-20, 21)
+            output = n + 10
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "subtract_five":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-15, 26)
+            output = n - 5
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "is_zero":
+        for _ in range(num_examples - len(examples)):
+            # Include zero more frequently for this test
+            if np.random.random() < 0.3:
+                n = 0
+            else:
+                n = np.random.randint(-10, 11)
+                if n == 0:
+                    n = np.random.choice([-1, 1])  # Avoid zero
+            output = n == 0
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "sum_of_two":
+        for _ in range(num_examples - len(examples)):
+            a, b = np.random.randint(-10, 21, 2)
+            output = a + b
+            examples.append({"input": [a, b], "output": output})
+
+    elif template_name == "difference":
+        for _ in range(num_examples - len(examples)):
+            a, b = np.random.randint(-10, 21, 2)
+            output = a - b
+            examples.append({"input": [a, b], "output": output})
+
+    elif template_name == "product":
+        for _ in range(num_examples - len(examples)):
+            a, b = np.random.randint(-8, 9, 2)  # Keep products reasonable
+            output = a * b
+            examples.append({"input": [a, b], "output": output})
+
+    elif template_name == "count_up_to_n":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(0, 21)
+            output = n if n >= 0 else 0
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "is_greater_than_ten":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-5, 26)
+            output = n > 10
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "remainder_by_three":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-10, 21)
+            output = n % 3
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "is_divisible_by_five":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-20, 21)
+            output = n % 5 == 0
+            examples.append({"input": n, "output": output})
+
+    elif template_name == "triple":
+        for _ in range(num_examples - len(examples)):
+            n = np.random.randint(-10, 11)
+            output = n * 3
             examples.append({"input": n, "output": output})
 
     return examples[:num_examples]
