@@ -16,12 +16,12 @@ from common import PuzzleDatasetMetadata
 TYPE_VOCAB = {
     # Basic types (4 primitives)
     'int': 1, 'float': 2, 'str': 3, 'bool': 4,
-    
+
     # Container types (3 containers + generics)
     'List[int]': 5, 'List[float]': 6, 'List[str]': 7, 'List[bool]': 8,
     'Dict[str,int]': 9, 'Dict[str,str]': 10, 'Dict[int,str]': 11,
     'Set[int]': 12, 'Set[str]': 13, 'Set[float]': 14,
-    
+
     # Arrays (common alias)
     'Array[int]': 5, 'Array[float]': 6, 'Array[str]': 7
 }
@@ -619,7 +619,7 @@ PROGRAM_TEMPLATES = {
             {"input": [4, 10], "output": 4},
             {"input": [6, 13], "output": 5},
             {"input": [3, 5], "output": 1},
-            {"input": [7, 11], "output": 9}
+            {"input": [7, 11], "output": 2}
         ],
         "implementation": """def program(n, p):
     result = 1
@@ -752,7 +752,7 @@ PROGRAM_TEMPLATES = {
             if x % i == 0:
                 return False
         return True
-    
+
     candidate = n + 1
     while not is_prime(candidate):
         candidate += 1
@@ -1310,19 +1310,19 @@ PROGRAM_TEMPLATES = {
         ],
         "outputs": [{"type": "str", "description": "Triangle type"}],
         "base_examples": [
-            {"input": [3, 3, 3], "output": "equilateral"},
-            {"input": [3, 3, 4], "output": "isosceles"},
-            {"input": [3, 4, 5], "output": "scalene"},
-            {"input": [5, 5, 8], "output": "isosceles"},
-            {"input": [2, 3, 4], "output": "scalene"}
+            {"input": [3, 3, 3], "output": "e"},
+            {"input": [3, 3, 4], "output": "i"},
+            {"input": [3, 4, 5], "output": "s"},
+            {"input": [5, 5, 8], "output": "i"},
+            {"input": [2, 3, 4], "output": "s"}
         ],
         "implementation": """def program(a, b, c):
     if a == b == c:
-        return 'equilateral'
+        return 'e'
     elif a == b or b == c or a == c:
-        return 'isosceles'
+        return 'i'
     else:
-        return 'scalene'"""
+        return 's'"""
     },
 
     "leap_year": {
@@ -1684,16 +1684,16 @@ class ASTSimplifier:
     def ast_to_sparse_representation(self, code: str) -> Dict[str, Any]:
         """Convert Python code to efficient sparse representation"""
         tree = self.python_to_ast(code)
-        
+
         nodes = []
         edges = []
         node_counter = 0
-        
+
         def traverse(node, parent_id=None):
             nonlocal node_counter
             current_id = node_counter
             node_counter += 1
-            
+
             # Store node info compactly
             simplified = self.simplify_ast_node(node)
             nodes.append({
@@ -1701,21 +1701,21 @@ class ASTSimplifier:
                 'value': simplified.get('value', 0),
                 'params': simplified.get('params', 0)
             })
-            
+
             # Store edge (parent -> child)
             if parent_id is not None:
                 edges.append((parent_id, current_id))
-            
+
             # Traverse children
             for child in ast.iter_child_nodes(node):
                 if node_counter < self.max_nodes:
                     traverse(child, current_id)
-        
+
         traverse(tree.body[0])  # Start from function definition
-        
+
         # Convert to efficient arrays
         num_nodes = len(nodes)
-        
+
         return {
             'num_nodes': num_nodes,
             'node_types': np.array([n['type'] for n in nodes], dtype=np.int32),
@@ -1727,27 +1727,47 @@ class ASTSimplifier:
     def flatten_sparse_ast(self, sparse_ast: Dict[str, Any]) -> np.ndarray:
         """Flatten sparse AST to fixed-size tensor for training"""
         components = []
-        
+
         # Number of actual nodes/edges
         num_nodes = sparse_ast['num_nodes']
         num_edges = len(sparse_ast['edge_list'])
         components.extend([num_nodes, num_edges])  # 2 dims
-        
+
         # Node features (padded to max_nodes)
         for key in ['node_types', 'node_values', 'node_params']:
             arr = sparse_ast[key]
             pad_width = max(0, self.max_nodes - len(arr))
             padded = np.pad(arr, (0, pad_width))[:self.max_nodes]
             components.extend(padded.tolist())  # 3 × max_nodes = 90 dims
-        
+
         # Edge list (padded to max_edges)
         edges_flat = sparse_ast['edge_list'].flatten()
-        pad_width = max(0, 2*self.max_edges - len(edges_flat)) 
+        pad_width = max(0, 2*self.max_edges - len(edges_flat))
         edges_padded = np.pad(edges_flat, (0, pad_width))[:2*self.max_edges]
         components.extend(edges_padded.tolist())  # 2 × max_edges = 50 dims
-        
+
         return np.array(components, dtype=np.int32)
         # Total: 2 + 90 + 50 = 142 dims (vs 2650)
+
+
+def convert_numpy_to_python(obj):
+    """Recursively convert numpy types to Python types to avoid binary serialization in YAML"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, list):
+        return [convert_numpy_to_python(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_to_python(item) for item in obj)
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_to_python(value) for key, value in obj.items()}
+    else:
+        return obj
 
 
 def generate_program_examples(template_name: str, template: Dict[str, Any], num_examples: int) -> List[Dict[str, Any]]:
@@ -1992,7 +2012,7 @@ def generate_program_examples(template_name: str, template: Dict[str, Any], num_
                 else:
                     temp_n = 3 * temp_n + 1
                 steps += 1
-                if steps > 100:  # Safety limit
+                if steps > 500:  # Safety limit (increased for numbers like 27)
                     break
             examples.append({"input": n, "output": steps})
 
@@ -2137,21 +2157,24 @@ def generate_program_examples(template_name: str, template: Dict[str, Any], num_
 
     elif template_name == "triangle_type":
         for _ in range(num_examples - len(examples)):
-            if np.random.random() < 0.2:  # 20% equilateral
+            rand_val = np.random.random()
+            if rand_val < 0.2:  # 20% equilateral
                 side = np.random.randint(1, 10)
                 a, b, c = side, side, side
-                output = 'equilateral'
-            elif np.random.random() < 0.4:  # 40% isosceles
+                output = 'e'
+            elif rand_val < 0.6:  # 40% isosceles (0.2 to 0.6)
                 side1 = np.random.randint(1, 10)
                 side2 = np.random.randint(1, 10)
+                while side2 == side1:  # Ensure it's not equilateral
+                    side2 = np.random.randint(1, 10)
                 a, b, c = side1, side1, side2
-                output = 'isosceles'
-            else:  # 40% scalene
+                output = 'i'
+            else:  # 40% scalene (0.6 to 1.0)  
                 a, b, c = np.random.randint(1, 10, 3)
-                if len(set([a, b, c])) == 3:
-                    output = 'scalene'
-                else:
-                    output = 'isosceles'  # If accidentally same
+                # Ensure all sides are different
+                while len(set([a, b, c])) != 3:
+                    a, b, c = np.random.randint(1, 10, 3)
+                output = 's'
             examples.append({"input": [a, b, c], "output": output})
 
     elif template_name == "leap_year":
@@ -2170,7 +2193,9 @@ def generate_program_examples(template_name: str, template: Dict[str, Any], num_
             else:
                 break
 
-    return examples[:num_examples]
+    # Convert all numpy types to Python types before returning
+    cleaned_examples = convert_numpy_to_python(examples[:num_examples])
+    return cleaned_examples
 
 
 def encode_types(type_specs: List[Dict]) -> List[int]:
@@ -2208,11 +2233,11 @@ def encode_single_example(example: Dict) -> List[float]:
             return [float(1 if inp else 0)]
         else:
             return [float(inp)]
-    
+
     # Flatten and limit input size
     flat_input = flatten_input(example["input"])
     inputs = flat_input[:8] + [0] * max(0, 8 - len(flat_input))
-    
+
     # Handle output (could be list or single value)
     if isinstance(example["output"], list):
         # For array outputs, take first few elements
@@ -2225,34 +2250,34 @@ def encode_single_example(example: Dict) -> List[float]:
         output = [float(1 if example["output"] else 0), 0]
     else:
         output = [float(example["output"]), 0]
-    
+
     return inputs + output  # 8 + 2 = 10 dims per example
 
 
 def encode_program_specification_compressed(spec: Dict[str, Any]) -> np.ndarray:
     """Encode program specification using compressed format"""
     components = []
-    
+
     # Basic metadata (3 dims)
     components.extend([
-        len(spec["inputs"]), 
-        len(spec["outputs"]), 
+        len(spec["inputs"]),
+        len(spec["outputs"]),
         len(spec["examples"])
     ])
-    
+
     # Type information (2-8 dims) - Previously missing!
     input_types = encode_types(spec["inputs"])
     output_types = encode_types(spec["outputs"])
     components.extend(input_types + output_types)
-    
+
     # Description hash (4 dims)
     desc_hash = simple_text_hash(spec["description"])
     components.extend(desc_hash)
-    
+
     # Individual examples (10 dims each, variable count)
     for example in spec["examples"]:
         components.extend(encode_single_example(example))
-    
+
     return np.array(components, dtype=np.float32)
     # Total: ~15 header + 10*num_examples = ~45-215 dims
 
@@ -2367,10 +2392,10 @@ def pad_variable_length_arrays(arrays: List[np.ndarray]) -> np.ndarray:
     """Pad variable-length arrays to same size for stacking"""
     if not arrays:
         return np.array([])
-    
+
     # Find maximum length
     max_len = max(len(arr) for arr in arrays)
-    
+
     # Pad all arrays to max length
     padded_arrays = []
     for arr in arrays:
@@ -2379,7 +2404,7 @@ def pad_variable_length_arrays(arrays: List[np.ndarray]) -> np.ndarray:
         else:
             padded = arr
         padded_arrays.append(padded)
-    
+
     return np.stack(padded_arrays, axis=0)
 
 
