@@ -283,7 +283,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[7, 7], output=7)
         ],
         implementation="""def program(a, b):
-    return a if a > b else b"""
+    if a > b:
+        return a
+    else:
+        return b"""
     ))
 
     registry.register(ProgramSpecification(
@@ -303,7 +306,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=42, output=42)
         ],
         implementation="""def program(n):
-    return n if n >= 0 else -n"""
+    if n >= 0:
+        return n
+    else:
+        return -n"""
     ))
 
     registry.register(ProgramSpecification(
@@ -435,7 +441,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[7, 7], output=7)
         ],
         implementation="""def program(a, b):
-    return a if a < b else b"""
+    if a < b:
+        return a
+    else:
+        return b"""
     ))
 
     registry.register(ProgramSpecification(
@@ -757,7 +766,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[1, 2, 3, 4]], output=[4, 3, 2, 1])
         ],
         implementation="""def program(arr):
-    return arr[::-1]"""
+    result = []
+    for i in range(len(arr) - 1, -1, -1):
+        result.append(arr[i])
+    return result"""
     ))
 
     registry.register(ProgramSpecification(
@@ -867,7 +879,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 0, 0]], output=0)
         ],
         implementation="""def program(arr):
-    return sum(1 for x in arr if x > 0)"""
+    count = 0
+    for x in arr:
+        if x > 0:
+            count += 1
+    return count"""
     ))
 
     registry.register(ProgramSpecification(
@@ -887,7 +903,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[-2, -1, 0]], output=2)
         ],
         implementation="""def program(arr):
-    return sum(1 for x in arr if x % 2 == 0)"""
+    count = 0
+    for x in arr:
+        if x % 2 == 0:
+            count += 1
+    return count"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1014,7 +1034,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    return s[::-1]"""
+    result = ""
+    for i in range(len(s)-1, -1, -1):
+        result += s[i]
+    return result"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1034,7 +1057,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    return s.upper()"""
+    result = ""
+    for c in s:
+        result += c.upper()
+    return result"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1054,7 +1080,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    return s.lower()"""
+    result = ""
+    for c in s:
+        result += c.lower()
+    return result"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1075,7 +1104,11 @@ def create_default_registry() -> ProgramRegistry:
         ],
         implementation="""def program(s):
     vowels = 'aeiouAEIOU'
-    return sum(1 for c in s if c in vowels)"""
+    count = 0
+    for c in s:
+        if c in vowels:
+            count += 1
+    return count"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1095,7 +1128,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="anna", output=True)
         ],
         implementation="""def program(s):
-    return s == s[::-1]"""
+    reversed_s = ""
+    for i in range(len(s)-1, -1, -1):
+        reversed_s += s[i]
+    return s == reversed_s"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1142,7 +1178,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    return s[0] if s else ''"""
+    if s:
+        return s[0]
+    else:
+        return ''"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1162,7 +1201,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    return s[-1] if s else ''"""
+    if s:
+        return s[-1]
+    else:
+        return ''"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1420,7 +1462,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=10, output=1)
         ],
         implementation="""def program(n):
-    return sum(int(digit) for digit in str(abs(n)))"""
+    sum = 0
+    for digit in str(abs(n)):
+        sum += int(digit)
+    return sum"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1607,7 +1652,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=2, output=5)
         ],
         implementation="""def program(n):
-    return sum(i*i for i in range(1, n + 1))"""
+    sum = 0
+    for i in range(1, n + 1):
+        sum += i * i
+    return sum"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1767,7 +1815,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=10, output=1)
         ],
         implementation="""def program(n):
-    return max(int(digit) for digit in str(abs(n)))"""
+    max_digit = 0
+    for digit in str(abs(n)):
+        max_digit = max(max_digit, int(digit))
+    return max_digit"""
     ))
 
     # Comparison Operations
@@ -1910,26 +1961,26 @@ def create_default_registry() -> ProgramRegistry:
                 augmentation=create_randint_augmentation(1, 10, "Random third side length")
             )
         ],
-        outputs=[ParameterSpec(type=ParameterType.STR, description="Triangle type", augmentation=None)],
+        outputs=[ParameterSpec(type=ParameterType.STR, description="Triangle type r right, e equilateral, i isosceles, s scalene, i invalid", augmentation=None)],
         base_examples=[
-            Example(input=[3, 4, 5], output="right"),
-            Example(input=[3, 3, 3], output="equilateral"),
-            Example(input=[3, 3, 4], output="isosceles"),
-            Example(input=[3, 4, 6], output="scalene"),
-            Example(input=[1, 2, 3], output="invalid")
+            Example(input=[3, 4, 5], output="r"),
+            Example(input=[3, 3, 3], output="e"),
+            Example(input=[3, 3, 4], output="i"),
+            Example(input=[3, 4, 6], output="s"),
+            Example(input=[1, 2, 3], output="i")
         ],
         implementation="""def program(a, b, c):
     sides = sorted([a, b, c])
     if sides[0] + sides[1] <= sides[2]:
-        return 'invalid'
+        return 'i'
     elif a == b == c:
-        return 'equilateral'
+        return 'e'
     elif a == b or b == c or a == c:
-        return 'isosceles'
+        return 'i'
     elif a*a + b*b == c*c or a*a + c*c == b*b or b*b + c*c == a*a:
-        return 'right'
+        return 'r'
     else:
-        return 'scalene'"""
+        return 's'"""
     ))
 
     registry.register(ProgramSpecification(
@@ -2003,21 +2054,21 @@ def create_default_registry() -> ProgramRegistry:
             description="The input number",
             augmentation=create_randint_augmentation(-10, 10, "Random integer for number categorization")
         )],
-        outputs=[ParameterSpec(type=ParameterType.STR, description="Number category", augmentation=None)],
+        outputs=[ParameterSpec(type=ParameterType.INT, description="Number -1, 0, 1", augmentation=None)],
         base_examples=[
-            Example(input=5, output="positive"),
-            Example(input=-3, output="negative"),
-            Example(input=0, output="zero"),
-            Example(input=10, output="positive"),
-            Example(input=-15, output="negative")
+            Example(input=5, output=1),
+            Example(input=-3, output=-1),
+            Example(input=0, output=0),
+            Example(input=10, output=1),
+            Example(input=-15, output=-1)
         ],
         implementation="""def program(n):
     if n > 0:
-        return 'positive'
+        return 1
     elif n < 0:
-        return 'negative'
+        return -1
     else:
-        return 'zero'"""
+        return 0"""
     ))
 
     registry.register(ProgramSpecification(
@@ -2060,23 +2111,23 @@ def create_default_registry() -> ProgramRegistry:
             description="Month number (1-12)",
             augmentation=create_randint_augmentation(1, 12, "Random month for season determination")
         )],
-        outputs=[ParameterSpec(type=ParameterType.STR, description="Season name", augmentation=None)],
+        outputs=[ParameterSpec(type=ParameterType.INT, description="Season sprint 0 summer 1 fall 2 winter 3", augmentation=None)],
         base_examples=[
-            Example(input=3, output="spring"),
-            Example(input=6, output="summer"),
-            Example(input=9, output="fall"),
-            Example(input=12, output="winter"),
-            Example(input=1, output="winter")
+            Example(input=3, output=0),
+            Example(input=6, output=1),
+            Example(input=9, output=2),
+            Example(input=12, output=3),
+            Example(input=1, output=3)
         ],
         implementation="""def program(month):
     if month in [12, 1, 2]:
-        return 'winter'
+        return 3
     elif month in [3, 4, 5]:
-        return 'spring'
+        return 0
     elif month in [6, 7, 8]:
-        return 'summer'
+        return 1
     else:
-        return 'fall'"""
+        return 2"""
     ))
 
     return registry
