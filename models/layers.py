@@ -6,9 +6,15 @@ import torch.nn.functional as F
 
 try:
     from flash_attn_interface import flash_attn_func  # type: ignore[import]
+    FLASH_ATTN_AVAILABLE = True
 except ImportError:
-    # Fallback to FlashAttention 2
-    from flash_attn import flash_attn_func  # type: ignore[import]
+    try:
+        from flash_attn import flash_attn_func  # type: ignore[import]
+        FLASH_ATTN_AVAILABLE = True
+    except ImportError:
+        # Fallback to PyTorch native attention
+        FLASH_ATTN_AVAILABLE = False
+        flash_attn_func = None
 
 from models.common import trunc_normal_init_
 
@@ -126,14 +132,52 @@ class Attention(nn.Module):
             cos, sin = cos_sin
             query, key = apply_rotary_pos_emb(query, key, cos, sin)
 
-        # flash attn
-        attn_output = flash_attn_func(q=query, k=key, v=value, causal=self.causal)
-        if isinstance(attn_output, tuple):  # fa2 and fa3 compatibility
-            attn_output = attn_output[0]
-
-        # attn_output: [batch_size, num_heads, seq_len, head_dim]
-        attn_output = attn_output.view(batch_size, seq_len, self.output_size)  # type: ignore
+        if FLASH_ATTN_AVAILABLE:
+            # Use FlashAttention if available
+            attn_output = flash_attn_func(q=query, k=key, v=value, causal=self.causal)
+            if isinstance(attn_output, tuple):  # fa2 and fa3 compatibility
+                attn_output = attn_output[0]
+            # attn_output: [batch_size, seq_len, num_heads, head_dim]
+            attn_output = attn_output.view(batch_size, seq_len, self.output_size)
+        else:
+            # Fallback to PyTorch native attention
+            attn_output = self._pytorch_attention_fallback(query, key, value, batch_size, seq_len)
+        
         return self.o_proj(attn_output)
+    
+    def _pytorch_attention_fallback(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, 
+                                   batch_size: int, seq_len: int) -> torch.Tensor:
+        """Fallback attention implementation using PyTorch native operations"""
+        import math
+        
+        # query, key, value: [batch_size, seq_len, num_heads, head_dim]
+        # Transpose to [batch_size, num_heads, seq_len, head_dim]
+        query = query.transpose(1, 2)
+        key = key.transpose(1, 2) 
+        value = value.transpose(1, 2)
+        
+        # Repeat k,v heads if needed (for grouped query attention)
+        if self.num_key_value_heads != self.num_heads:
+            key = key.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
+            value = value.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
+        
+        # Compute attention scores
+        scale = 1.0 / math.sqrt(self.head_dim)
+        scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+        
+        # Apply causal mask if needed
+        if self.causal:
+            mask = torch.triu(torch.ones(seq_len, seq_len, device=scores.device), diagonal=1)
+            scores.masked_fill_(mask.bool(), float('-inf'))
+        
+        # Softmax and apply to values
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_output = torch.matmul(attn_weights, value)
+        
+        # Transpose back and reshape: [batch_size, seq_len, num_heads * head_dim]
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.output_size)
+        
+        return attn_output
 
 
 class SwiGLU(nn.Module):
