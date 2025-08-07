@@ -187,7 +187,7 @@ class ASTSimplifier:
                 raise ValueError(f"Unsupported node type: {type(node)}")
 
         # Start traversal from the function definition
-        result = traverse_to_readable(tree.body[0])
+        result = traverse_to_readable(tree.body[0])  # type: ignore
 
         return result
 
