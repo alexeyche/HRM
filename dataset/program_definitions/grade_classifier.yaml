@@ -1,0 +1,36 @@
+name: grade_classifier
+description: Classify grade (A: 90+, B: 80+, C: 70+, D: 60+, F: <60)
+inputs:
+- type: int
+  description: Grade score
+  augmentation:
+    type: RandInt
+    parameters: [0, 101]
+    description: Random grade score between 0 and 100
+outputs:
+- type: str
+  description: Letter grade
+  augmentation: null
+base_examples:
+- input: 95
+  output: A
+- input: 85
+  output: B
+- input: 75
+  output: C
+- input: 65
+  output: D
+- input: 55
+  output: F
+implementation: |
+  def program(score):
+      if score >= 90:
+          return 'A'
+      elif score >= 80:
+          return 'B'
+      elif score >= 70:
+          return 'C'
+      elif score >= 60:
+          return 'D'
+      else:
+          return 'F'

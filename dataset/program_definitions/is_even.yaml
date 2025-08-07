@@ -1,0 +1,27 @@
+base_examples:
+- input: 4
+  output: true
+- input: 7
+  output: false
+- input: 0
+  output: true
+- input: -2
+  output: true
+- input: -3
+  output: false
+description: Check if a number is even
+implementation: "def program(n):\n    return n % 2 == 0"
+inputs:
+- augmentation:
+    description: Random integer for evenness check
+    parameters:
+    - -10
+    - 20
+    type: RandInt
+  description: The input number
+  type: int
+name: is_even
+outputs:
+- augmentation: null
+  description: True if even, False if odd
+  type: bool

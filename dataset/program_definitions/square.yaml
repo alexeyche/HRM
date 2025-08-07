@@ -1,0 +1,27 @@
+base_examples:
+- input: 0
+  output: 0
+- input: 1
+  output: 1
+- input: 3
+  output: 9
+- input: -4
+  output: 16
+- input: 5
+  output: 25
+description: Calculate the square of a number
+implementation: "def program(n):\n    return n * n"
+inputs:
+- augmentation:
+    description: Random integer for square calculation
+    parameters:
+    - -10
+    - 11
+    type: RandInt
+  description: The input number
+  type: int
+name: square
+outputs:
+- augmentation: null
+  description: The square of the number
+  type: int

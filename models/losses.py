@@ -22,7 +22,7 @@ def log_stablemax(x, dim=-1):
 
 
 def stablemax_cross_entropy(logits, labels, ignore_index: int = -100):
-    logprobs = log_stablemax(logits.to(torch.float64), dim=-1)
+    logprobs = log_stablemax(logits.to(torch.float32), dim=-1)
 
     valid_mask = labels != ignore_index
     transformed_labels = torch.where(valid_mask, labels, 0)
@@ -42,7 +42,7 @@ class ACTLossHead(nn.Module):
         super().__init__()
         self.model = model
         self.loss_fn = globals()[loss_type]
-        
+
     def initial_carry(self, *args, **kwargs):
         return self.model.initial_carry(*args, **kwargs)  # type: ignore
 
@@ -65,12 +65,12 @@ class ACTLossHead(nn.Module):
 
             is_correct = mask & (torch.argmax(outputs["logits"], dim=-1) == labels)
             seq_is_correct = is_correct.sum(-1) == loss_counts
-            
+
             # Metrics (halted)
             valid_metrics = new_carry.halted & (loss_counts > 0)
             metrics = {
                 "count": valid_metrics.sum(),
-                
+
                 "accuracy":       torch.where(valid_metrics, (is_correct.to(torch.float32) / loss_divisor).sum(-1), 0).sum(),
                 "exact_accuracy": (valid_metrics & seq_is_correct).sum(),
 
@@ -99,3 +99,85 @@ class ACTLossHead(nn.Module):
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
 
         return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all()
+
+
+class ProgramSynthesisLossHead(nn.Module):
+    """Loss head for program synthesis with AST generation"""
+
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def initial_carry(self, *args, **kwargs):
+        return self.model.initial_carry(*args, **kwargs)
+
+    def forward(
+        self,
+        return_keys: Sequence[str],
+        # Model args
+        **model_kwargs,
+    ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
+
+        # Forward through program synthesis model
+        new_carry, outputs = self.model(**model_kwargs)
+
+        # Extract AST targets from batch
+        batch = model_kwargs.get('batch', {})
+        ast_targets = batch.get('ast_targets', {})
+
+        # Compute program synthesis losses
+        targets = {'ast_targets': ast_targets}
+        losses = self.model.compute_loss(outputs, targets)
+
+        # Extract individual losses
+        total_loss = losses.get('total_loss', torch.tensor(0.0))
+
+        # Compute metrics
+        with torch.no_grad():
+            # Count valid examples (those with existing nodes)
+            valid_examples = ast_targets.get('node_exists', torch.ones(1, 1, dtype=torch.bool)).any(dim=-1)
+            count = valid_examples.sum()
+
+            # Node existence accuracy
+            node_exist_acc = 0.0
+            if 'node_exists' in outputs and 'node_exists' in ast_targets:
+                node_pred = torch.sigmoid(outputs['node_exists']) > 0.5
+                node_exist_acc = (node_pred == ast_targets['node_exists']).float().mean()
+
+            # Node type accuracy (only for existing nodes)
+            node_type_acc = 0.0
+            if 'node_types' in outputs and 'node_types' in ast_targets:
+                mask = ast_targets['node_exists']
+                if mask.any():
+                    node_type_pred = outputs['node_types'].argmax(dim=-1)
+                    correct = (node_type_pred[mask] == ast_targets['node_types'][mask])
+                    node_type_acc = correct.float().mean()
+
+            # Metrics dict
+            metrics = {
+                'count': count.float(),
+                'node_exist_accuracy': (node_exist_acc * count).float(),
+                'node_type_accuracy': (node_type_acc * count).float(),
+            }
+
+            # Add individual losses to metrics
+            for loss_name, loss_value in losses.items():
+                if loss_name != 'total_loss' and isinstance(loss_value, torch.Tensor):
+                    metrics[loss_name] = loss_value.detach() * count
+
+        # Q-learning metrics if available
+        if 'q_halt_logits' in outputs and new_carry.halted is not None:
+            # Simple Q-value metrics
+            with torch.no_grad():
+                valid_q = new_carry.halted & (count > 0)
+                if valid_q.any():
+                    metrics['q_halt_logits'] = outputs['q_halt_logits'][valid_q].mean().detach() * valid_q.sum()
+                    metrics['steps'] = new_carry.steps[valid_q].float().sum()
+
+        # Filter outputs for return
+        detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
+
+        # All finished when all sequences are halted (for ACT compatibility)
+        all_finished = new_carry.halted.all() if hasattr(new_carry, 'halted') else torch.tensor(True)
+
+        return new_carry, total_loss, metrics, detached_outputs, all_finished

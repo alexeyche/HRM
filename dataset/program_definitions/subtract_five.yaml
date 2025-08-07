@@ -1,0 +1,27 @@
+base_examples:
+- input: 10
+  output: 5
+- input: 5
+  output: 0
+- input: 0
+  output: -5
+- input: -3
+  output: -8
+- input: 15
+  output: 10
+description: Subtract 5 from a number
+implementation: "def program(n):\n    return n - 5"
+inputs:
+- augmentation:
+    description: Random integer for subtracting five
+    parameters:
+    - -15
+    - 26
+    type: RandInt
+  description: The input number
+  type: int
+name: subtract_five
+outputs:
+- augmentation: null
+  description: The number minus 5
+  type: int

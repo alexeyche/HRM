@@ -1,0 +1,27 @@
+base_examples:
+- input: 5
+  output: 15
+- input: 10
+  output: 55
+- input: 3
+  output: 6
+- input: 1
+  output: 1
+- input: 0
+  output: 0
+description: Sum up all numbers up to the input number N
+implementation: "def program(n):\n    return sum(range(1, n + 1))"
+inputs:
+- augmentation:
+    description: Random positive integer for sum calculation
+    parameters:
+    - 1
+    - 20
+    type: RandInt
+  description: The input number N
+  type: int
+name: sum_up_to_n
+outputs:
+- augmentation: null
+  description: The sum of all numbers up to N
+  type: int

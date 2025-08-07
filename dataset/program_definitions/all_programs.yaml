@@ -1,0 +1,609 @@
+programs:
+- base_examples:
+  - input: 5
+    output: 15
+  - input: 10
+    output: 55
+  - input: 3
+    output: 6
+  - input: 1
+    output: 1
+  - input: 0
+    output: 0
+  description: Sum up all numbers up to the input number N
+  implementation: "def program(n):\n    return sum(range(1, n + 1))"
+  inputs:
+  - augmentation:
+      description: Random positive integer for sum calculation
+      parameters:
+      - 1
+      - 20
+      type: RandInt
+    description: The input number N
+    type: int
+  name: sum_up_to_n
+  outputs:
+  - augmentation: null
+    description: The sum of all numbers up to N
+    type: int
+- base_examples:
+  - input:
+    - 5
+    - 3
+    output: 5
+  - input:
+    - 10
+    - 15
+    output: 15
+  - input:
+    - -2
+    - -5
+    output: -2
+  - input:
+    - 0
+    - 0
+    output: 0
+  - input:
+    - 7
+    - 7
+    output: 7
+  description: Return the larger of two numbers
+  implementation: "def program(a, b):\n    return a if a > b else b"
+  inputs:
+  - augmentation:
+      description: Random integer for first number
+      parameters:
+      - -10
+      - 20
+      type: RandInt
+    description: First number
+    type: int
+  - augmentation:
+      description: Random integer for second number
+      parameters:
+      - -10
+      - 20
+      type: RandInt
+    description: Second number
+    type: int
+  name: max_of_two
+  outputs:
+  - augmentation: null
+    description: The larger number
+    type: int
+- base_examples:
+  - input: -5
+    output: 5
+  - input: 3
+    output: 3
+  - input: 0
+    output: 0
+  - input: -100
+    output: 100
+  - input: 42
+    output: 42
+  description: Return the absolute value of a number
+  implementation: "def program(n):\n    return n if n >= 0 else -n"
+  inputs:
+  - augmentation:
+      description: Random integer for absolute value calculation
+      parameters:
+      - -20
+      - 20
+      type: RandInt
+    description: The input number
+    type: int
+  name: absolute_value
+  outputs:
+  - augmentation: null
+    description: The absolute value
+    type: int
+- base_examples:
+  - input: 4
+    output: true
+  - input: 7
+    output: false
+  - input: 0
+    output: true
+  - input: -2
+    output: true
+  - input: -3
+    output: false
+  description: Check if a number is even
+  implementation: "def program(n):\n    return n % 2 == 0"
+  inputs:
+  - augmentation:
+      description: Random integer for evenness check
+      parameters:
+      - -10
+      - 20
+      type: RandInt
+    description: The input number
+    type: int
+  name: is_even
+  outputs:
+  - augmentation: null
+    description: True if even, False if odd
+    type: bool
+- base_examples:
+  - input: 0
+    output: 1
+  - input: 1
+    output: 1
+  - input: 3
+    output: 6
+  - input: 4
+    output: 24
+  - input: 5
+    output: 120
+  description: Calculate the factorial of a number
+  implementation: "def program(n):\n    if n <= 1:\n        return 1\n    return n\
+    \ * program(n - 1)"
+  inputs:
+  - augmentation:
+      description: Random small integer for factorial calculation
+      parameters:
+      - 0
+      - 8
+      type: RandInt
+    description: The input number (non-negative)
+    type: int
+  name: factorial
+  outputs:
+  - augmentation: null
+    description: The factorial
+    type: int
+- base_examples:
+  - input: 0
+    output: 1
+  - input: 1
+    output: 2
+  - input: 3
+    output: 8
+  - input: 4
+    output: 16
+  - input: 5
+    output: 32
+  description: Calculate 2 to the power of n
+  implementation: "def program(n):\n    return 2 ** n"
+  inputs:
+  - augmentation:
+      description: Random small exponent for power calculation
+      parameters:
+      - 0
+      - 10
+      type: RandInt
+    description: The exponent
+    type: int
+  name: power_of_two
+  outputs:
+  - augmentation: null
+    description: 2^n
+    type: int
+- base_examples:
+  - input: 0
+    output: 0
+  - input: 1
+    output: 1
+  - input: 3
+    output: 9
+  - input: -4
+    output: 16
+  - input: 5
+    output: 25
+  description: Calculate the square of a number
+  implementation: "def program(n):\n    return n * n"
+  inputs:
+  - augmentation:
+      description: Random integer for square calculation
+      parameters:
+      - -10
+      - 11
+      type: RandInt
+    description: The input number
+    type: int
+  name: square
+  outputs:
+  - augmentation: null
+    description: The square of the number
+    type: int
+- base_examples:
+  - input: 0
+    output: 0
+  - input: 1
+    output: 1
+  - input: 2
+    output: 8
+  - input: -3
+    output: -27
+  - input: 4
+    output: 64
+  description: Calculate the cube of a number
+  implementation: "def program(n):\n    return n * n * n"
+  inputs:
+  - augmentation:
+      description: Random small integer for cube calculation
+      parameters:
+      - -5
+      - 6
+      type: RandInt
+    description: The input number
+    type: int
+  name: cube
+  outputs:
+  - augmentation: null
+    description: The cube of the number
+    type: int
+- base_examples:
+  - input:
+    - 5
+    - 3
+    output: 3
+  - input:
+    - 10
+    - 15
+    output: 10
+  - input:
+    - -2
+    - -5
+    output: -5
+  - input:
+    - 0
+    - 0
+    output: 0
+  - input:
+    - 7
+    - 7
+    output: 7
+  description: Return the smaller of two numbers
+  implementation: "def program(a, b):\n    return a if a < b else b"
+  inputs:
+  - augmentation:
+      description: Random integer for first number
+      parameters:
+      - -10
+      - 20
+      type: RandInt
+    description: First number
+    type: int
+  - augmentation:
+      description: Random integer for second number
+      parameters:
+      - -10
+      - 20
+      type: RandInt
+    description: Second number
+    type: int
+  name: min_of_two
+  outputs:
+  - augmentation: null
+    description: The smaller number
+    type: int
+- base_examples:
+  - input: 5
+    output: true
+  - input: -3
+    output: false
+  - input: 0
+    output: false
+  - input: 10
+    output: true
+  - input: -1
+    output: false
+  description: Check if a number is positive
+  implementation: "def program(n):\n    return n > 0"
+  inputs:
+  - augmentation:
+      description: Random integer for positivity check
+      parameters:
+      - -10
+      - 20
+      type: RandInt
+    description: The input number
+    type: int
+  name: is_positive
+  outputs:
+  - augmentation: null
+    description: True if positive, False otherwise
+    type: bool
+- base_examples:
+  - input: -5
+    output: true
+  - input: 3
+    output: false
+  - input: 0
+    output: false
+  - input: -10
+    output: true
+  - input: 1
+    output: false
+  description: Check if a number is negative
+  implementation: "def program(n):\n    return n < 0"
+  inputs:
+  - augmentation:
+      description: Random integer for negativity check
+      parameters:
+      - -10
+      - 20
+      type: RandInt
+    description: The input number
+    type: int
+  name: is_negative
+  outputs:
+  - augmentation: null
+    description: True if negative, False otherwise
+    type: bool
+- base_examples:
+  - input: 0
+    output: 0
+  - input: 3
+    output: 6
+  - input: -4
+    output: -8
+  - input: 10
+    output: 20
+  - input: -1
+    output: -2
+  description: Double a number (multiply by 2)
+  implementation: "def program(n):\n    return n * 2"
+  inputs:
+  - augmentation:
+      description: Random integer for doubling
+      parameters:
+      - -20
+      - 21
+      type: RandInt
+    description: The input number
+    type: int
+  name: double
+  outputs:
+  - augmentation: null
+    description: The number multiplied by 2
+    type: int
+- base_examples:
+  - input: 0
+    output: 0
+  - input: 6
+    output: 3
+  - input: -8
+    output: -4
+  - input: 10
+    output: 5
+  - input: 5
+    output: 2
+  description: Divide a number by 2 (integer division)
+  implementation: "def program(n):\n    return n // 2"
+  inputs:
+  - augmentation:
+      description: Random integer for halving
+      parameters:
+      - -20
+      - 21
+      type: RandInt
+    description: The input number
+    type: int
+  name: half
+  outputs:
+  - augmentation: null
+    description: The number divided by 2
+    type: int
+- base_examples:
+  - input: 0
+    output: 10
+  - input: 5
+    output: 15
+  - input: -3
+    output: 7
+  - input: 10
+    output: 20
+  - input: -15
+    output: -5
+  description: Add 10 to a number
+  implementation: "def program(n):\n    return n + 10"
+  inputs:
+  - augmentation:
+      description: Random integer for adding ten
+      parameters:
+      - -20
+      - 21
+      type: RandInt
+    description: The input number
+    type: int
+  name: add_ten
+  outputs:
+  - augmentation: null
+    description: The number plus 10
+    type: int
+- base_examples:
+  - input: 10
+    output: 5
+  - input: 5
+    output: 0
+  - input: 0
+    output: -5
+  - input: -3
+    output: -8
+  - input: 15
+    output: 10
+  description: Subtract 5 from a number
+  implementation: "def program(n):\n    return n - 5"
+  inputs:
+  - augmentation:
+      description: Random integer for subtracting five
+      parameters:
+      - -15
+      - 26
+      type: RandInt
+    description: The input number
+    type: int
+  name: subtract_five
+  outputs:
+  - augmentation: null
+    description: The number minus 5
+    type: int
+- base_examples:
+  - input: 0
+    output: true
+  - input: 1
+    output: false
+  - input: -1
+    output: false
+  - input: 10
+    output: false
+  - input: -5
+    output: false
+  description: Check if a number is zero
+  implementation: "def program(n):\n    return n == 0"
+  inputs:
+  - augmentation:
+      description: Choice between zero and non-zero numbers
+      parameters:
+      - 0
+      - -1
+      - 1
+      - 5
+      - -5
+      - 10
+      type: Choice
+    description: The input number
+    type: int
+  name: is_zero
+  outputs:
+  - augmentation: null
+    description: True if zero, False otherwise
+    type: bool
+- base_examples:
+  - input:
+    - 3
+    - 5
+    output: 8
+  - input:
+    - 0
+    - 0
+    output: 0
+  - input:
+    - -2
+    - 7
+    output: 5
+  - input:
+    - 10
+    - -3
+    output: 7
+  - input:
+    - -5
+    - -3
+    output: -8
+  description: Add two numbers together
+  implementation: "def program(a, b):\n    return a + b"
+  inputs:
+  - augmentation:
+      description: Random integer for first number
+      parameters:
+      - -10
+      - 21
+      type: RandInt
+    description: First number
+    type: int
+  - augmentation:
+      description: Random integer for second number
+      parameters:
+      - -10
+      - 21
+      type: RandInt
+    description: Second number
+    type: int
+  name: sum_of_two
+  outputs:
+  - augmentation: null
+    description: The sum of the two numbers
+    type: int
+- base_examples:
+  - input:
+    - 8
+    - 3
+    output: 5
+  - input:
+    - 5
+    - 5
+    output: 0
+  - input:
+    - 2
+    - 7
+    output: -5
+  - input:
+    - 10
+    - -3
+    output: 13
+  - input:
+    - -5
+    - -2
+    output: -3
+  description: Calculate the difference between two numbers (a - b)
+  implementation: "def program(a, b):\n    return a - b"
+  inputs:
+  - augmentation:
+      description: Random integer for first number
+      parameters:
+      - -10
+      - 21
+      type: RandInt
+    description: First number
+    type: int
+  - augmentation:
+      description: Random integer for second number
+      parameters:
+      - -10
+      - 21
+      type: RandInt
+    description: Second number
+    type: int
+  name: difference
+  outputs:
+  - augmentation: null
+    description: The difference (a - b, augmentation=None)
+    type: int
+- base_examples:
+  - input:
+    - 3
+    - 4
+    output: 12
+  - input:
+    - 0
+    - 5
+    output: 0
+  - input:
+    - -2
+    - 3
+    output: -6
+  - input:
+    - 7
+    - -2
+    output: -14
+  - input:
+    - -3
+    - -4
+    output: 12
+  description: Multiply two numbers together
+  implementation: "def program(a, b):\n    return a * b"
+  inputs:
+  - augmentation:
+      description: Random small integer for first number
+      parameters:
+      - -8
+      - 9
+      type: RandInt
+    description: First number
+    type: int
+  - augmentation:
+      description: Random small integer for second number
+      parameters:
+      - -8
+      - 9
+      type: RandInt
+    description: Second number
+    type: int
+  name: product
+  outputs:
+  - augmentation: null
+    description: The product of the two numbers
+    type: int

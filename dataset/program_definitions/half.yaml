@@ -1,0 +1,27 @@
+base_examples:
+- input: 0
+  output: 0
+- input: 6
+  output: 3
+- input: -8
+  output: -4
+- input: 10
+  output: 5
+- input: 5
+  output: 2
+description: Divide a number by 2 (integer division)
+implementation: "def program(n):\n    return n // 2"
+inputs:
+- augmentation:
+    description: Random integer for halving
+    parameters:
+    - -20
+    - 21
+    type: RandInt
+  description: The input number
+  type: int
+name: half
+outputs:
+- augmentation: null
+  description: The number divided by 2
+  type: int

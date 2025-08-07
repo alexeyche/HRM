@@ -1,0 +1,45 @@
+base_examples:
+- input:
+  - 3
+  - 5
+  output: 8
+- input:
+  - 0
+  - 0
+  output: 0
+- input:
+  - -2
+  - 7
+  output: 5
+- input:
+  - 10
+  - -3
+  output: 7
+- input:
+  - -5
+  - -3
+  output: -8
+description: Add two numbers together
+implementation: "def program(a, b):\n    return a + b"
+inputs:
+- augmentation:
+    description: Random integer for first number
+    parameters:
+    - -10
+    - 21
+    type: RandInt
+  description: First number
+  type: int
+- augmentation:
+    description: Random integer for second number
+    parameters:
+    - -10
+    - 21
+    type: RandInt
+  description: Second number
+  type: int
+name: sum_of_two
+outputs:
+- augmentation: null
+  description: The sum of the two numbers
+  type: int

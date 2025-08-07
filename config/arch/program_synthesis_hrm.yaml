@@ -1,0 +1,36 @@
+name: program_synthesis_hrm@ProgramSynthesisHRM
+loss:
+  name: losses@ProgramSynthesisLossHead
+
+# HRM base config (reduced for faster training/testing)
+halt_exploration_prob: 0.1
+halt_max_steps: 8
+
+H_cycles: 1
+L_cycles: 1
+
+H_layers: 2
+L_layers: 2
+
+hidden_size: 256
+num_heads: 4
+expansion: 2
+
+puzzle_emb_ndim: 0 # Disable puzzle embeddings for simplicity
+
+pos_encodings: rope
+forward_dtype: float32 # Use float32 instead of bfloat16
+
+# Program synthesis specific config
+max_nodes: 20
+max_edges: 15
+num_node_types: 30
+max_spec_tokens: 64
+max_examples: 5
+
+# Loss weights
+node_exist_weight: 1.0
+node_type_weight: 2.0
+adjacency_weight: 1.5
+node_value_weight: 1.0
+q_loss_weight: 10000.0 # Scale up Q-learning loss for better optimization

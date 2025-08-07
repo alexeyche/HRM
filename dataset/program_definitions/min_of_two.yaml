@@ -1,0 +1,45 @@
+base_examples:
+- input:
+  - 5
+  - 3
+  output: 3
+- input:
+  - 10
+  - 15
+  output: 10
+- input:
+  - -2
+  - -5
+  output: -5
+- input:
+  - 0
+  - 0
+  output: 0
+- input:
+  - 7
+  - 7
+  output: 7
+description: Return the smaller of two numbers
+implementation: "def program(a, b):\n    return a if a < b else b"
+inputs:
+- augmentation:
+    description: Random integer for first number
+    parameters:
+    - -10
+    - 20
+    type: RandInt
+  description: First number
+  type: int
+- augmentation:
+    description: Random integer for second number
+    parameters:
+    - -10
+    - 20
+    type: RandInt
+  description: Second number
+  type: int
+name: min_of_two
+outputs:
+- augmentation: null
+  description: The smaller number
+  type: int

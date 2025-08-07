@@ -1,0 +1,27 @@
+base_examples:
+- input: 0
+  output: 0
+- input: 3
+  output: 6
+- input: -4
+  output: -8
+- input: 10
+  output: 20
+- input: -1
+  output: -2
+description: Double a number (multiply by 2)
+implementation: "def program(n):\n    return n * 2"
+inputs:
+- augmentation:
+    description: Random integer for doubling
+    parameters:
+    - -20
+    - 21
+    type: RandInt
+  description: The input number
+  type: int
+name: double
+outputs:
+- augmentation: null
+  description: The number multiplied by 2
+  type: int

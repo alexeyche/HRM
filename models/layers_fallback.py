@@ -1,29 +1,16 @@
-from typing import Tuple
+"""
+Fallback implementations of layers without FlashAttention dependency
+"""
 
+from typing import Tuple
+import math
 import torch
 from torch import nn
 import torch.nn.functional as F
 
-try:
-    from flash_attn_interface import flash_attn_func  # type: ignore[import]
-    FLASH_ATTN_AVAILABLE = True
-except ImportError:
-    try:
-        from flash_attn import flash_attn_func  # type: ignore[import]
-        FLASH_ATTN_AVAILABLE = True
-    except ImportError:
-        # Fallback to PyTorch native attention
-        FLASH_ATTN_AVAILABLE = False
-        flash_attn_func = None
-
 from models.common import trunc_normal_init_
 
-
 CosSin = Tuple[torch.Tensor, torch.Tensor]
-
-
-def _find_multiple(a, b):
-    return (-(a // -b)) * b
 
 
 def rotate_half(x: torch.Tensor):
@@ -44,6 +31,15 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
     k_embed = (k * cos.unsqueeze(-2)) + (rotate_half(k) * sin.unsqueeze(-2))
 
     return q_embed.to(orig_dtype), k_embed.to(orig_dtype)
+
+
+def rms_norm(hidden_states: torch.Tensor, variance_epsilon: float = 1e-6):
+    """RMS normalization"""
+    input_dtype = hidden_states.dtype
+    hidden_states = hidden_states.to(torch.float32)
+    variance = hidden_states.pow(2).mean(-1, keepdim=True)
+    hidden_states = hidden_states * torch.rsqrt(variance + variance_epsilon)
+    return hidden_states.to(input_dtype)
 
 
 class CastedLinear(nn.Module):
@@ -102,68 +98,48 @@ class RotaryEmbedding(nn.Module):
 
 
 class Attention(nn.Module):
+    """Fallback attention implementation using standard PyTorch"""
+    
     def __init__(self, hidden_size, head_dim, num_heads, num_key_value_heads, causal=False):
         super().__init__()
-
         self.hidden_size = hidden_size
         self.head_dim = head_dim
-        self.output_size = head_dim * num_heads
         self.num_heads = num_heads
         self.num_key_value_heads = num_key_value_heads
         self.causal = causal
-
-        self.qkv_proj = CastedLinear(self.hidden_size, (self.num_heads + 2 * self.num_key_value_heads) * self.head_dim, bias=False)
-        self.o_proj = CastedLinear(self.output_size, self.hidden_size, bias=False)
+        
+        self.q_proj = CastedLinear(hidden_size, num_heads * head_dim, bias=False)
+        self.k_proj = CastedLinear(hidden_size, num_key_value_heads * head_dim, bias=False)  
+        self.v_proj = CastedLinear(hidden_size, num_key_value_heads * head_dim, bias=False)
+        self.o_proj = CastedLinear(num_heads * head_dim, hidden_size, bias=False)
+        
+        self.scale = 1.0 / math.sqrt(head_dim)
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = hidden_states.shape
-
-        # hidden_states: [bs, seq_len, num_heads, head_dim]
-        qkv = self.qkv_proj(hidden_states)
-
-        # Split head
-        qkv = qkv.view(batch_size, seq_len, self.num_heads + 2 * self.num_key_value_heads, self.head_dim)
-        query = qkv[:, :, :self.num_heads]
-        key = qkv[:, :, self.num_heads: self.num_heads + self.num_key_value_heads]
-        value = qkv[:, :, self.num_heads + self.num_key_value_heads:]
-
-        # RoPE
+        
+        # Project to Q, K, V
+        q = self.q_proj(hidden_states).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        k = self.k_proj(hidden_states).view(batch_size, seq_len, self.num_key_value_heads, self.head_dim)
+        v = self.v_proj(hidden_states).view(batch_size, seq_len, self.num_key_value_heads, self.head_dim)
+        
+        # Apply rotary embeddings if available
         if cos_sin is not None:
             cos, sin = cos_sin
-            query, key = apply_rotary_pos_emb(query, key, cos, sin)
-
-        if FLASH_ATTN_AVAILABLE:
-            # Use FlashAttention if available
-            attn_output = flash_attn_func(q=query, k=key, v=value, causal=self.causal)
-            if isinstance(attn_output, tuple):  # fa2 and fa3 compatibility
-                attn_output = attn_output[0]
-            # attn_output: [batch_size, seq_len, num_heads, head_dim]
-            attn_output = attn_output.view(batch_size, seq_len, self.output_size)
-        else:
-            # Fallback to PyTorch native attention
-            attn_output = self._pytorch_attention_fallback(query, key, value, batch_size, seq_len)
+            q, k = apply_rotary_pos_emb(q, k, cos[:seq_len], sin[:seq_len])
         
-        return self.o_proj(attn_output)
-    
-    def _pytorch_attention_fallback(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, 
-                                   batch_size: int, seq_len: int) -> torch.Tensor:
-        """Fallback attention implementation using PyTorch native operations"""
-        import math
-        
-        # query, key, value: [batch_size, seq_len, num_heads, head_dim]
-        # Transpose to [batch_size, num_heads, seq_len, head_dim]
-        query = query.transpose(1, 2)
-        key = key.transpose(1, 2) 
-        value = value.transpose(1, 2)
+        # Transpose for attention computation: [batch, heads, seq_len, head_dim]
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2) 
+        v = v.transpose(1, 2)
         
         # Repeat k,v heads if needed (for grouped query attention)
         if self.num_key_value_heads != self.num_heads:
-            key = key.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
-            value = value.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
+            k = k.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
+            v = v.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
         
         # Compute attention scores
-        scale = 1.0 / math.sqrt(self.head_dim)
-        scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
         
         # Apply causal mask if needed
         if self.causal:
@@ -172,31 +148,29 @@ class Attention(nn.Module):
         
         # Softmax and apply to values
         attn_weights = F.softmax(scores, dim=-1)
-        attn_output = torch.matmul(attn_weights, value)
+        out = torch.matmul(attn_weights, v)
         
-        # Transpose back and reshape: [batch_size, seq_len, num_heads * head_dim]
-        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.output_size)
+        # Transpose back and reshape: [batch, seq_len, num_heads * head_dim]
+        out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.num_heads * self.head_dim)
         
-        return attn_output
+        # Final projection
+        return self.o_proj(out)
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, hidden_size: int, expansion: float):
+    """SwiGLU activation function"""
+    
+    def __init__(self, hidden_size, expansion):
         super().__init__()
-        inter = _find_multiple(round(expansion * hidden_size * 2 / 3), 256)
-
-        self.gate_up_proj = CastedLinear(hidden_size, inter * 2, bias=False)
-        self.down_proj    = CastedLinear(inter, hidden_size, bias=False)
+        self.hidden_size = hidden_size
+        self.intermediate_size = int(hidden_size * expansion)
+        
+        self.gate_proj = CastedLinear(hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = CastedLinear(hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = CastedLinear(self.intermediate_size, hidden_size, bias=False)
 
     def forward(self, x):
-        gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
-        return self.down_proj(F.silu(gate) * up)
-
-
-def rms_norm(hidden_states: torch.Tensor, variance_epsilon: float) -> torch.Tensor:
-    input_dtype = hidden_states.dtype
-    hidden_states = hidden_states.to(torch.float32)
-
-    variance = hidden_states.square().mean(-1, keepdim=True)
-    hidden_states = hidden_states * torch.rsqrt(variance + variance_epsilon)
-    return hidden_states.to(input_dtype)
+        gate = self.gate_proj(x)
+        up = self.up_proj(x)
+        intermediate = F.silu(gate) * up
+        return self.down_proj(intermediate)

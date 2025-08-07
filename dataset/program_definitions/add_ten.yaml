@@ -1,0 +1,27 @@
+base_examples:
+- input: 0
+  output: 10
+- input: 5
+  output: 15
+- input: -3
+  output: 7
+- input: 10
+  output: 20
+- input: -15
+  output: -5
+description: Add 10 to a number
+implementation: "def program(n):\n    return n + 10"
+inputs:
+- augmentation:
+    description: Random integer for adding ten
+    parameters:
+    - -20
+    - 21
+    type: RandInt
+  description: The input number
+  type: int
+name: add_ten
+outputs:
+- augmentation: null
+  description: The number plus 10
+  type: int

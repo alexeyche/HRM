@@ -1,0 +1,45 @@
+base_examples:
+- input:
+  - 3
+  - 4
+  output: 12
+- input:
+  - 0
+  - 5
+  output: 0
+- input:
+  - -2
+  - 3
+  output: -6
+- input:
+  - 7
+  - -2
+  output: -14
+- input:
+  - -3
+  - -4
+  output: 12
+description: Multiply two numbers together
+implementation: "def program(a, b):\n    return a * b"
+inputs:
+- augmentation:
+    description: Random small integer for first number
+    parameters:
+    - -8
+    - 9
+    type: RandInt
+  description: First number
+  type: int
+- augmentation:
+    description: Random small integer for second number
+    parameters:
+    - -8
+    - 9
+    type: RandInt
+  description: Second number
+  type: int
+name: product
+outputs:
+- augmentation: null
+  description: The product of the two numbers
+  type: int

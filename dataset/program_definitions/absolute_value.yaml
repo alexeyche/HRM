@@ -1,0 +1,27 @@
+base_examples:
+- input: -5
+  output: 5
+- input: 3
+  output: 3
+- input: 0
+  output: 0
+- input: -100
+  output: 100
+- input: 42
+  output: 42
+description: Return the absolute value of a number
+implementation: "def program(n):\n    return n if n >= 0 else -n"
+inputs:
+- augmentation:
+    description: Random integer for absolute value calculation
+    parameters:
+    - -20
+    - 20
+    type: RandInt
+  description: The input number
+  type: int
+name: absolute_value
+outputs:
+- augmentation: null
+  description: The absolute value
+  type: int

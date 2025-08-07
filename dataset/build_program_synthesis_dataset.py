@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from argdantic import ArgParser
 from pydantic import BaseModel
 
-from common import PuzzleDatasetMetadata
+from dataset.common import PuzzleDatasetMetadata
 
 
 # Type vocabulary for program specifications
@@ -2169,7 +2169,7 @@ def generate_program_examples(template_name: str, template: Dict[str, Any], num_
                     side2 = np.random.randint(1, 10)
                 a, b, c = side1, side1, side2
                 output = 'i'
-            else:  # 40% scalene (0.6 to 1.0)  
+            else:  # 40% scalene (0.6 to 1.0)
                 a, b, c = np.random.randint(1, 10, 3)
                 # Ensure all sides are different
                 while len(set([a, b, c])) != 3:

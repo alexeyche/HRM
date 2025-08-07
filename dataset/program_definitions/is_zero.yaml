@@ -1,0 +1,31 @@
+base_examples:
+- input: 0
+  output: true
+- input: 1
+  output: false
+- input: -1
+  output: false
+- input: 10
+  output: false
+- input: -5
+  output: false
+description: Check if a number is zero
+implementation: "def program(n):\n    return n == 0"
+inputs:
+- augmentation:
+    description: Choice between zero and non-zero numbers
+    parameters:
+    - 0
+    - -1
+    - 1
+    - 5
+    - -5
+    - 10
+    type: Choice
+  description: The input number
+  type: int
+name: is_zero
+outputs:
+- augmentation: null
+  description: True if zero, False otherwise
+  type: bool

@@ -1,0 +1,27 @@
+base_examples:
+- input: -5
+  output: true
+- input: 3
+  output: false
+- input: 0
+  output: false
+- input: -10
+  output: true
+- input: 1
+  output: false
+description: Check if a number is negative
+implementation: "def program(n):\n    return n < 0"
+inputs:
+- augmentation:
+    description: Random integer for negativity check
+    parameters:
+    - -10
+    - 20
+    type: RandInt
+  description: The input number
+  type: int
+name: is_negative
+outputs:
+- augmentation: null
+  description: True if negative, False otherwise
+  type: bool

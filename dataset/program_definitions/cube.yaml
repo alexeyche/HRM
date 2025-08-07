@@ -1,0 +1,27 @@
+base_examples:
+- input: 0
+  output: 0
+- input: 1
+  output: 1
+- input: 2
+  output: 8
+- input: -3
+  output: -27
+- input: 4
+  output: 64
+description: Calculate the cube of a number
+implementation: "def program(n):\n    return n * n * n"
+inputs:
+- augmentation:
+    description: Random small integer for cube calculation
+    parameters:
+    - -5
+    - 6
+    type: RandInt
+  description: The input number
+  type: int
+name: cube
+outputs:
+- augmentation: null
+  description: The cube of the number
+  type: int

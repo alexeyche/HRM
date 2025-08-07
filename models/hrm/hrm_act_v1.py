@@ -140,8 +140,12 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
         with torch.no_grad():
-            self.q_head.weight.zero_()
-            self.q_head.bias.fill_(-5)  # type: ignore
+            # Add small random noise to break symmetry and enable learning
+            self.q_head.weight.normal_(0, 0.01)  # Small random weights instead of zeros
+            self.q_head.bias.fill_(-5)  # Keep bias at -5 for initial low Q-values
+            # Add tiny random noise to bias to prevent perfect target matching
+            if self.q_head.bias is not None:
+                self.q_head.bias.add_(torch.randn_like(self.q_head.bias) * 0.01)  # Slightly larger noise
 
     def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
         # Token embedding

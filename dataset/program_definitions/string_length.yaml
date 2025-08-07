@@ -1,0 +1,27 @@
+name: string_length
+description: Get length of string
+inputs:
+- type: str
+  description: Input string
+  augmentation:
+    type: RandString
+    parameters: [0, 15]
+    description: Random string of length 0-15
+outputs:
+- type: int
+  description: Length of string
+  augmentation: null
+base_examples:
+- input: hello
+  output: 5
+- input: world
+  output: 5
+- input: ""
+  output: 0
+- input: a
+  output: 1
+- input: python
+  output: 6
+implementation: |
+  def program(s):
+      return len(s)
