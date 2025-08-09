@@ -1,0 +1,21 @@
+---
+alwaysApply: true
+---
+
+# Development guidelines
+
+## Python
+
+Use `uv` to run Python code.
+
+To run anything in Python, use `uv run <command>`.
+
+## Tests
+
+Tests are stored in the `tests` directory.
+To run tests run `uv run pytest`
+
+
+## Alternative way to activate environment
+
+To activate the environment, run `source .venv/bin/activate` as I've `uv venv` to create the environment.

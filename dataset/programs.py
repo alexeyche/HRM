@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 import random
 import re
 from enum import Enum
-
+import numpy as np
 
 class ParameterType(str, Enum):
     """Supported parameter types for program inputs/outputs"""
@@ -85,7 +85,6 @@ class ProgramSpecification(BaseModel):
         if seed is not None:
             random.seed(seed)
             # Import numpy only when needed
-            import numpy as np
             np.random.seed(seed)
 
         examples = [Example(input=ex.input, output=ex.output) for ex in self.base_examples]

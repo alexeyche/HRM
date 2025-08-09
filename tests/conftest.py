@@ -1,0 +1,17 @@
+import os
+import sys
+
+
+def _add_project_root_to_path() -> None:
+    # tests/ -> project root
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+
+_add_project_root_to_path()
+
+
+
+
+

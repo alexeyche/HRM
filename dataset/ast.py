@@ -1,10 +1,16 @@
 import ast
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple, Optional
 from enum import Enum
+from collections import defaultdict
 
 
 class ASTNodeType(Enum):
     """Enumeration of AST node types for minimal language graph neural network modeling"""
+
+    # Structural
+    MODULE = "module"               # Python module root
+    FUNCTION_DEF = "function_def"    # Function definition
+    RETURN = "return"               # Return statement
 
     # Control Flow
     FOR = "for"                     # For loop
@@ -13,6 +19,7 @@ class ASTNodeType(Enum):
 
     # Variables and Names
     VARIABLE = "variable"           # Variable reference (Name node)
+    VARIABLE_SYMBOL = "variable_symbol"  # Unique symbol node per distinct variable
     ASSIGNMENT = "assignment"       # Assignment statement
     AUGMENTED_ASSIGNMENT = "augmented_assignment"  # +=, -=, etc.
 
@@ -32,6 +39,30 @@ class ASTNodeType(Enum):
     # Literals
     CONSTANT = "constant"           # Literal values (numbers, strings, etc.)
     EXPRESSION = "expression"       # Expression wrapper
+
+
+class EdgeType(Enum):
+    """Edge types for AST graph representation"""
+
+    AST = "ast"                    # Parent -> child structural edge
+    SYMBOL = "symbol"              # Variable occurrence -> variable symbol node
+    NEXT_SIBLING = "next_sibling"  # Sibling order edge
+
+
+class ASTGraph:
+    """Container for nodes and edges in the simplified AST graph"""
+
+    def __init__(self) -> None:
+        self.nodes: List[Dict[str, Any]] = []
+        self.edges: List[Tuple[int, int, EdgeType]] = []
+
+    def add_node(self, node_type: ASTNodeType, **attrs: Any) -> int:
+        idx = len(self.nodes)
+        self.nodes.append({"type": node_type, **attrs})
+        return idx
+
+    def add_edge(self, src: int, dst: int, edge_type: EdgeType) -> None:
+        self.edges.append((src, dst, edge_type))
 
 
 class ASTSimplifier:
@@ -190,4 +221,283 @@ class ASTSimplifier:
         result = traverse_to_readable(tree.body[0])  # type: ignore
 
         return result
+
+    @staticmethod
+    def ast_to_graph(code: str) -> Dict[str, Any]:
+        """Convert Python code to a GNN-friendly AST graph using enum node types.
+
+        Returns a dictionary with:
+          - nodes: List[Dict] each containing 'type': ASTNodeType and optional attributes
+          - edges: List[Tuple[int, int, EdgeType]]
+          - root: index of the root node
+        """
+        py_tree = ASTSimplifier.python_to_ast(code)
+
+        graph = ASTGraph()
+        children_by_parent: Dict[int, List[int]] = defaultdict(list)
+
+        # Canonicalize variables to per-program IDs
+        variable_to_id: Dict[str, int] = {}
+
+        class VariableCollector(ast.NodeVisitor):
+            def visit_Name(self, node: ast.Name) -> None:  # type: ignore[override]
+                if node.id not in variable_to_id:
+                    variable_to_id[node.id] = len(variable_to_id) + 1  # 0 reserved for UNK
+
+        VariableCollector().visit(py_tree)
+
+        # Create variable symbol nodes (unique per distinct variable)
+        symbol_node_index: Dict[str, int] = {
+            name: graph.add_node(ASTNodeType.VARIABLE_SYMBOL, name=name, var_id=vid)
+            for name, vid in variable_to_id.items()
+        }
+
+        # Operator mappings
+        binop_map: Dict[Any, str] = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.Mod: "%", ast.Pow: "**"}
+        unaryop_map: Dict[Any, str] = {ast.USub: "-", ast.UAdd: "+", ast.Not: "not"}
+        cmpop_map: Dict[Any, str] = {
+            ast.Eq: "==",
+            ast.NotEq: "!=",
+            ast.Lt: "<",
+            ast.LtE: "<=",
+            ast.Gt: ">",
+            ast.GtE: ">=",
+        }
+        boolop_map: Dict[Any, str] = {ast.And: "and", ast.Or: "or"}
+
+        def link(parent_idx: int, child_idx: int) -> None:
+            graph.add_edge(parent_idx, child_idx, EdgeType.AST)
+            children_by_parent[parent_idx].append(child_idx)
+
+        def add(node: ast.AST, parent: Optional[int] = None) -> int:
+            # Structural roots
+            if isinstance(node, ast.Module):
+                idx = graph.add_node(ASTNodeType.MODULE)
+                for stmt in node.body:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                return idx
+
+            if isinstance(node, ast.FunctionDef):
+                idx = graph.add_node(
+                    ASTNodeType.FUNCTION_DEF,
+                    name=node.name,
+                    params=[arg.arg for arg in node.args.args],
+                )
+                for stmt in node.body:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                return idx
+
+            if isinstance(node, ast.Return):
+                idx = graph.add_node(ASTNodeType.RETURN)
+                if node.value is not None:
+                    v = add(node.value, idx)
+                    link(idx, v)
+                return idx
+
+            # Control flow
+            if isinstance(node, ast.For):
+                idx = graph.add_node(ASTNodeType.FOR)
+                t = add(node.target, idx)
+                i = add(node.iter, idx)
+                link(idx, t)
+                link(idx, i)
+                for stmt in node.body:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                for stmt in node.orelse or []:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                return idx
+
+            if isinstance(node, ast.While):
+                idx = graph.add_node(ASTNodeType.WHILE)
+                test_idx = add(node.test, idx)
+                link(idx, test_idx)
+                for stmt in node.body:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                for stmt in node.orelse or []:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                return idx
+
+            if isinstance(node, ast.If):
+                idx = graph.add_node(ASTNodeType.IF)
+                test_idx = add(node.test, idx)
+                link(idx, test_idx)
+                for stmt in node.body:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                for stmt in node.orelse or []:
+                    cidx = add(stmt, idx)
+                    link(idx, cidx)
+                return idx
+
+            # Variables and assignments
+            if isinstance(node, ast.Name):
+                var_id = variable_to_id.get(node.id, 0)
+                idx = graph.add_node(
+                    ASTNodeType.VARIABLE,
+                    name=node.id,
+                    var_id=var_id,
+                    ctx=type(node.ctx).__name__,
+                )
+                # Link occurrence to its symbol node
+                if node.id in symbol_node_index:
+                    graph.add_edge(idx, symbol_node_index[node.id], EdgeType.SYMBOL)
+                return idx
+
+            if isinstance(node, ast.Assign):
+                idx = graph.add_node(ASTNodeType.ASSIGNMENT)
+                for tgt in node.targets:
+                    t = add(tgt, idx)
+                    link(idx, t)
+                val = add(node.value, idx)
+                link(idx, val)
+                return idx
+
+            if isinstance(node, ast.AugAssign):
+                idx = graph.add_node(ASTNodeType.AUGMENTED_ASSIGNMENT, op=binop_map.get(type(node.op), type(node.op).__name__))
+                t = add(node.target, idx)
+                v = add(node.value, idx)
+                link(idx, t)
+                link(idx, v)
+                return idx
+
+            # Expressions
+            if isinstance(node, ast.BinOp):
+                idx = graph.add_node(ASTNodeType.BINARY_OPERATION, op=binop_map.get(type(node.op), type(node.op).__name__))
+                l = add(node.left, idx)
+                r = add(node.right, idx)
+                link(idx, l)
+                link(idx, r)
+                return idx
+
+            if isinstance(node, ast.UnaryOp):
+                idx = graph.add_node(ASTNodeType.UNARY_OPERATION, op=unaryop_map.get(type(node.op), type(node.op).__name__))
+                o = add(node.operand, idx)
+                link(idx, o)
+                return idx
+
+            if isinstance(node, ast.Compare):
+                if len(node.ops) == 1 and len(node.comparators) == 1:
+                    op_name = cmpop_map.get(type(node.ops[0]), type(node.ops[0]).__name__)
+                    idx = graph.add_node(ASTNodeType.COMPARISON, op=op_name)
+                    l = add(node.left, idx)
+                    r = add(node.comparators[0], idx)
+                    link(idx, l)
+                    link(idx, r)
+                    return idx
+                else:
+                    ops = [cmpop_map.get(type(op), type(op).__name__) for op in node.ops]
+                    idx = graph.add_node(ASTNodeType.COMPARISON, ops=ops)
+                    l = add(node.left, idx)
+                    link(idx, l)
+                    for comp in node.comparators:
+                        c = add(comp, idx)
+                        link(idx, c)
+                    return idx
+
+            if isinstance(node, ast.BoolOp):
+                op_name = boolop_map.get(type(node.op), type(node.op).__name__)
+                idx = graph.add_node(ASTNodeType.BOOLEAN_OPERATION, op=op_name)
+                for val in node.values:
+                    v = add(val, idx)
+                    link(idx, v)
+                return idx
+
+            if isinstance(node, ast.Call):
+                func_name: Optional[str] = node.func.id if isinstance(node.func, ast.Name) else None  # type: ignore[attr-defined]
+                idx = graph.add_node(ASTNodeType.FUNCTION_CALL, function=func_name)
+                f = add(node.func, idx)
+                link(idx, f)
+                for arg in node.args:
+                    a = add(arg, idx)
+                    link(idx, a)
+                return idx
+
+            if isinstance(node, ast.Attribute):
+                idx = graph.add_node(ASTNodeType.ATTRIBUTE, attr=node.attr)
+                v = add(node.value, idx)
+                link(idx, v)
+                return idx
+
+            if isinstance(node, ast.Subscript):
+                idx = graph.add_node(ASTNodeType.SUBSCRIPT)
+                v = add(node.value, idx)
+                s = add(node.slice, idx)
+                link(idx, v)
+                link(idx, s)
+                return idx
+
+            if isinstance(node, ast.Slice):
+                idx = graph.add_node(ASTNodeType.SLICE)
+                if node.lower is not None:
+                    l = add(node.lower, idx)
+                    link(idx, l)
+                if node.upper is not None:
+                    u = add(node.upper, idx)
+                    link(idx, u)
+                if node.step is not None:
+                    st = add(node.step, idx)
+                    link(idx, st)
+                return idx
+
+            if isinstance(node, ast.Constant):
+                val = node.value
+                if isinstance(val, bool):
+                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="bool", value=bool(val))
+                elif isinstance(val, int):
+                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="int", value=int(val))
+                elif isinstance(val, float):
+                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="float", value=float(val))
+                elif isinstance(val, str):
+                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="str", value=str(val))
+                else:
+                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype=type(val).__name__, value=str(val))
+                return idx
+
+            if isinstance(node, ast.List):
+                idx = graph.add_node(ASTNodeType.LIST)
+                for elt in node.elts:
+                    e = add(elt, idx)
+                    link(idx, e)
+                return idx
+
+            if isinstance(node, ast.Tuple):
+                idx = graph.add_node(ASTNodeType.LIST)
+                for elt in node.elts:
+                    e = add(elt, idx)
+                    link(idx, e)
+                return idx
+
+            if isinstance(node, ast.Expr):
+                idx = graph.add_node(ASTNodeType.EXPRESSION)
+                v = add(node.value, idx)
+                link(idx, v)
+                return idx
+
+            # Nodes we intentionally skip or treat as no-ops (e.g., Pass, Break, Continue)
+            if isinstance(node, (ast.Pass, ast.Break, ast.Continue)):
+                # Represent as an empty expression wrapper for simplicity
+                idx = graph.add_node(ASTNodeType.EXPRESSION)
+                return idx
+
+            # Fallback: treat unhandled nodes as expression wrappers around their children
+            idx = graph.add_node(ASTNodeType.EXPRESSION)
+            for child in ast.iter_child_nodes(node):
+                c = add(child, idx)
+                link(idx, c)
+            return idx
+
+        root_index = add(py_tree)
+
+        # Add next_sibling edges per parent to encode order
+        for parent, children in children_by_parent.items():
+            for a, b in zip(children, children[1:]):
+                graph.add_edge(a, b, EdgeType.NEXT_SIBLING)
+
+        return {"nodes": graph.nodes, "edges": graph.edges, "root": root_index}
 

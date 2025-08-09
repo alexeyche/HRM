@@ -27,6 +27,8 @@ dependencies = [
     "ast2json>=0.4",
     "pyyaml>=6.0.2",
     "ipykernel>=6.29.5",
+    "torch-geometric>=2.6.1",
+    "pytest>=8.3.5",
 ]
 
 [project.optional-dependencies]
