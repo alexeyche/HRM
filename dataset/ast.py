@@ -680,7 +680,9 @@ class ASTSimplifier:
                         _raise_invalid("Invalid for target", idx, node)
                     if _is_invalid(iterator):
                         _raise_invalid("Invalid for iterator", idx, node)
-                    body_code = reconstruct_node(node_children[2])
+                    # Concatenate all body statements
+                    body_parts = [reconstruct_node(child) for child in node_children[2:]]
+                    body_code = "\n".join(body_parts)
                     if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
                         _raise_invalid("Invalid for body", idx, node)
                     body = indent_block(body_code, levels=1)
@@ -702,7 +704,9 @@ class ASTSimplifier:
                     condition = reconstruct_node(node_children[0])
                     if _is_invalid(condition):
                         _raise_invalid("Invalid while condition", idx, node)
-                    body_code = reconstruct_node(node_children[1])
+                    # Concatenate all body statements
+                    body_parts = [reconstruct_node(child) for child in node_children[1:]]
+                    body_code = "\n".join(body_parts)
                     if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
                         _raise_invalid("Invalid while body", idx, node)
                     body = indent_block(body_code, levels=1)
@@ -744,6 +748,8 @@ class ASTSimplifier:
                 op = node.get("op", "-")
                 if node_children:
                     operand = reconstruct_node(node_children[0])
+                    if op == "not":
+                        return f"not {operand}"
                     return f"{op}{operand}"
                 return f"# <invalid_unary_op_{op}>"
 
@@ -779,6 +785,14 @@ class ASTSimplifier:
                     call_args = [reconstruct_node(child) for child in node_children[1:]]
                     args_str = ", ".join(call_args)
                     return f"{obj}.{func_name}({args_str})"
+
+                # Recognize sorted(x)[::-1] pattern we normalized from reverse=True
+                if func_name == "sorted" and len(node_children) == 1:
+                    # If the single argument is a subscript slice with step -1, print as sorted(arg, reverse=True)
+                    arg_code = reconstruct_node(node_children[0])
+                    if arg_code.endswith("[::-1]"):
+                        base = arg_code[:-6]
+                        return f"sorted({base}, reverse=True)"
 
                 if node_children:
                     args = [reconstruct_node(child) for child in node_children]

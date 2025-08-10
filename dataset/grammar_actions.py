@@ -43,6 +43,7 @@ class ActionKind(str, Enum):
     SET_ELSE_BODY = "SET_ELSE_BODY"  # value: bool (has else clause)
     SET_ARG_LEN = "SET_ARG_LEN"      # value: int (number of function call arguments)
     SET_LIST_LEN = "SET_LIST_LEN"    # value: int (number of list elements)
+    SET_BLOCK_LEN = "SET_BLOCK_LEN"  # value: int (number of statements in a control-flow body)
 
     # Special tokens (reserved for later decoding use)
     BOS = "BOS"
@@ -299,6 +300,7 @@ class ParserState:
             ActionKind.SET_ELSE_BODY,
             ActionKind.SET_ARG_LEN,
             ActionKind.SET_LIST_LEN,
+            ActionKind.SET_BLOCK_LEN,
         ])
 
         return valid
@@ -319,6 +321,7 @@ class ParserState:
             ActionKind.SET_ELSE_BODY,
             ActionKind.SET_ARG_LEN,
             ActionKind.SET_LIST_LEN,
+            ActionKind.SET_BLOCK_LEN,
         ]:
             # Attribute-setting actions don't affect the parser stack
             # They just set metadata for the current context
@@ -597,6 +600,23 @@ def simplified_ast_to_graph(code: str) -> Dict[str, Any]:
             return idx
 
         elif isinstance(node, ast.Call):
+            # Normalize certain keyword patterns to preserve semantics in our simplified actions
+            # Handle sorted(arr, reverse=True) -> sorted(arr)[::-1]
+            try:
+                if isinstance(node.func, ast.Name) and node.func.id == "sorted":
+                    has_reverse_true = any(
+                        (kw.arg == "reverse" and isinstance(kw.value, ast.Constant) and bool(kw.value.value))
+                        for kw in getattr(node, "keywords", [])
+                    )
+                    if has_reverse_true:
+                        import ast as _ast
+                        new_call = _ast.Call(func=node.func, args=node.args, keywords=[kw for kw in node.keywords if kw.arg != "reverse"])  # type: ignore[attr-defined]
+                        slice_node = _ast.Slice(lower=None, upper=None, step=_ast.UnaryOp(op=_ast.USub(), operand=_ast.Constant(value=1)))
+                        sub_node = _ast.Subscript(value=new_call, slice=slice_node)
+                        return add(sub_node)
+            except Exception:
+                pass
+
             # Support simple function calls and method calls (attribute calls)
             func_name: str = "unknown"
             args: List[int] = []
@@ -635,7 +655,22 @@ def simplified_ast_to_graph(code: str) -> Dict[str, Any]:
 
         elif isinstance(node, ast.AugAssign):
             op_name = type(node.op).__name__
-            op_symbol = OPERATOR_MAP.get(op_name, op_name)
+            # Map AugAssign ops to their augmented tokens (+=, -=, etc.)
+            AUG_ASSIGN_MAP = {
+                'Add': '+=',
+                'Sub': '-=',
+                'Mult': '*=',
+                'Div': '/=',
+                'FloorDiv': '//=',
+                'Mod': '%=',
+                'Pow': '**=',
+                'LShift': '<<=',
+                'RShift': '>>=',
+                'BitOr': '|=',
+                'BitXor': '^=',
+                'BitAnd': '&=',
+            }
+            op_symbol = AUG_ASSIGN_MAP.get(op_name, OPERATOR_MAP.get(op_name, op_name))
             idx = add_node(ASTNodeType.AUGMENTED_ASSIGNMENT, op=op_symbol)
             t = add(node.target, idx)
             v = add(node.value, idx)
@@ -644,7 +679,11 @@ def simplified_ast_to_graph(code: str) -> Dict[str, Any]:
             return idx
 
         elif isinstance(node, ast.If):
-            idx = add_node(ASTNodeType.IF)
+            # Record whether there is an else branch to help actions encode boundaries
+            idx = add_node(
+                ASTNodeType.IF,
+                has_else=bool(node.orelse),
+            )
             cond = add(node.test, idx)
             link(idx, cond)
             for stmt in node.body:
@@ -793,9 +832,15 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
             child_list = children.get(idx, [])
             if child_list:
                 emit_expr(child_list[0])
-                # Then body statements
-                for child_idx in child_list[1:]:
-                    emit_stmt(child_idx)
+                # Encode whether there is an else branch (single-statement bodies supported)
+                has_else = bool(nodes[idx].get("has_else", False))
+                actions.append(Action(ActionKind.SET_ELSE_BODY, has_else))
+                # Then-branch: emit the first statement if present
+                if len(child_list) >= 2:
+                    emit_stmt(child_list[1])
+                # Else-branch: emit the first else statement if present
+                if has_else and len(child_list) >= 3:
+                    emit_stmt(child_list[2])
 
         elif ntype == ASTNodeType.FOR:
             actions.append(Action(ActionKind.PROD_FOR))
@@ -807,8 +852,10 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
                 # Iterator
                 if len(child_list) >= 2:
                     emit_expr(child_list[1])
-                # Then body statements
-                for child_idx in child_list[2:]:
+                # Then body statements with explicit length to preserve loops
+                body_stmts = child_list[2:]
+                actions.append(Action(ActionKind.SET_BLOCK_LEN, len(body_stmts)))
+                for child_idx in body_stmts:
                     emit_stmt(child_idx)
 
         elif ntype == ASTNodeType.WHILE:
@@ -817,8 +864,10 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
             child_list = children.get(idx, [])
             if child_list:
                 emit_expr(child_list[0])
-                # Then body statements
-                for child_idx in child_list[1:]:
+                # Then body statements with explicit length
+                body_stmts = child_list[1:]
+                actions.append(Action(ActionKind.SET_BLOCK_LEN, len(body_stmts)))
+                for child_idx in body_stmts:
                     emit_stmt(child_idx)
 
         elif ntype == ASTNodeType.EXPRESSION:
@@ -839,6 +888,9 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
         if ntype == ASTNodeType.VARIABLE:
             actions.append(Action(ActionKind.PROD_VARIABLE))
             actions.append(Action(ActionKind.SET_VAR_ID, node.get("var_id", 0)))
+            # Also carry the variable name to enable executable reconstruction
+            if "name" in node:
+                actions.append(Action(ActionKind.SET_VARIABLE_NAME, node.get("name")))
 
         elif ntype == ASTNodeType.CONSTANT:
             dtype = node.get("dtype", "int")
@@ -933,9 +985,13 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
             # Fallback: skip unsupported node types
             pass
 
-    # Start with the function body statements
+    # Start with the function body statements and emit function metadata
     for child_idx in children.get(root, []):
         if nodes[child_idx]["type"] == ASTNodeType.FUNCTION_DEF:
+            fn_name = nodes[child_idx].get("name", "program")
+            fn_params = nodes[child_idx].get("params", ["n"]) or ["n"]
+            actions.append(Action(ActionKind.SET_FUNCTION_NAME, fn_name))
+            actions.append(Action(ActionKind.SET_PARAMS, list(fn_params)))
             for stmt_idx in children.get(child_idx, []):
                 emit_stmt(stmt_idx)
             break
@@ -989,6 +1045,20 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
     mod = add_node(ASTNodeType.MODULE)
     fn = add_node(ASTNodeType.FUNCTION_DEF, name="program", params=["n"])  # minimal stub
     link(mod, fn)
+
+    # Optionally override function metadata if provided
+    if cursor < len(actions) and actions[cursor].kind == ActionKind.SET_FUNCTION_NAME:
+        fn_name_act = need(ActionKind.SET_FUNCTION_NAME)
+        nodes[fn]["name"] = fn_name_act.value
+    if cursor < len(actions) and actions[cursor].kind == ActionKind.SET_PARAMS:
+        params_act = need(ActionKind.SET_PARAMS)
+        try:
+            params_list = list(params_act.value) if params_act.value is not None else ["n"]
+        except Exception:
+            params_list = ["n"]
+        if not params_list:
+            params_list = ["n"]
+        nodes[fn]["params"] = params_list
 
     # Helpers
     EXPR_STARTERS = {
@@ -1067,11 +1137,18 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
             # Condition
             c = parse_expr()
             link(if_stmt, c)
-            # Body
+            # Optional else flag
+            has_else = False
+            if cursor < len(actions) and actions[cursor].kind == ActionKind.SET_ELSE_BODY:
+                flag = need(ActionKind.SET_ELSE_BODY)
+                has_else = bool(flag.value)
+            # Then body
             b = parse_stmt()
             link(if_stmt, b)
-            # Else bodies are not explicitly delimited by our action stream; any
-            # following statements will be treated at the caller level.
+            # Optional else body
+            if has_else:
+                e = parse_stmt()
+                link(if_stmt, e)
             return if_stmt
 
         elif a.kind == ActionKind.PROD_FOR:
@@ -1083,9 +1160,13 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
             # Iterator
             i = parse_expr()
             link(for_stmt, i)
-            # Body
-            b = parse_stmt()
-            link(for_stmt, b)
+            # Body count
+            body_len = 1
+            if cursor < len(actions) and actions[cursor].kind == ActionKind.SET_BLOCK_LEN:
+                body_len = int(need(ActionKind.SET_BLOCK_LEN).value)  # type: ignore[attr-defined]
+            for _ in range(body_len):
+                b = parse_stmt()
+                link(for_stmt, b)
             return for_stmt
 
         elif a.kind == ActionKind.PROD_WHILE:
@@ -1094,9 +1175,13 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
             # Condition
             c = parse_expr()
             link(while_stmt, c)
-            # Body
-            b = parse_stmt()
-            link(while_stmt, b)
+            # Body count
+            body_len = 1
+            if cursor < len(actions) and actions[cursor].kind == ActionKind.SET_BLOCK_LEN:
+                body_len = int(need(ActionKind.SET_BLOCK_LEN).value)  # type: ignore[attr-defined]
+            for _ in range(body_len):
+                b = parse_stmt()
+                link(while_stmt, b)
             return while_stmt
 
         elif a.kind == ActionKind.PROD_EXPRESSION:

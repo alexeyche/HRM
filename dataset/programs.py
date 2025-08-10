@@ -1387,11 +1387,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[5, 5], output=5)
         ],
         implementation="""def program(a, b):
-    def gcd(x, y):
-        while y:
-            x, y = y, x % y
-        return x
-    return (a * b) // gcd(a, b)"""
+    # Inline gcd to avoid nested function definitions for simpler AST
+    x, y = a, b
+    while y:
+        x, y = y, x % y
+    return (a * b) // x"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1708,18 +1708,22 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=15, output=17)
         ],
         implementation="""def program(n):
-    def is_prime(x):
-        if x < 2:
-            return False
-        for i in range(2, int(x**0.5) + 1):
-            if x % i == 0:
-                return False
-        return True
-
     candidate = n + 1
-    while not is_prime(candidate):
-        candidate += 1
-    return candidate"""
+    while True:
+        if candidate < 2:
+            candidate += 1
+            continue
+
+        is_prime = True
+        for i in range(2, int(candidate**0.5) + 1):
+            if candidate % i == 0:
+                is_prime = False
+                break
+
+        if is_prime:
+            return candidate
+
+        candidate += 1"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1972,7 +1976,7 @@ def create_default_registry() -> ProgramRegistry:
     sides = sorted([a, b, c])
     if sides[0] + sides[1] <= sides[2]:
         return 'i'
-    elif a == b == c:
+    elif a == b and b == c:
         return 'e'
     elif a == b or b == c or a == c:
         return 'i'

@@ -7,6 +7,48 @@ Tests the complete pipeline: code -> AST -> reconstructed code -> execution
 import pytest
 import ast
 from typing import Dict, Any
+import multiprocessing as _mp
+import re as _re
+import logging
+
+log = logging.getLogger(__name__)
+
+def _worker_run(code_str: str, inp: Any, q: Any) -> None:
+    try:
+        ns: Dict[str, Any] = {}
+        exec(code_str, ns)
+        m = _re.search(r"def\s+(\w+)\(", code_str)
+        # Prefer canonical name 'program' if available; otherwise fallback to first def
+        func = ns.get("program") or (ns.get(m.group(1)) if m else None)
+        if func is None:
+            q.put(("err", "function_not_found"))
+            return
+        if isinstance(inp, list):
+            out = func(*inp)
+        else:
+            out = func(inp)
+        q.put(("ok", out))
+    except Exception as e:  # pragma: no cover - surfaced in parent
+        q.put(("err", str(e)))
+
+
+def run_with_timeout(code_str: str, inp: Any, timeout_s: float = 0.1) -> Any:
+    # Reuse a lighter-weight process start if available (fork is set in conftest)
+    ctx = _mp.get_context()
+    q: Any = ctx.Queue()
+    p = ctx.Process(target=_worker_run, args=(code_str, inp, q))
+    p.start()
+    p.join(timeout_s)
+    if p.is_alive():
+        p.terminate()
+        p.join(0.1)
+        raise TimeoutError("execution timed out")
+    if q.empty():
+        raise RuntimeError("no result returned")
+    tag, payload = q.get()
+    if tag == "ok":
+        return payload
+    raise RuntimeError(payload)
 
 from dataset.ast import ASTSimplifier, ASTNodeType
 from dataset.grammar_actions import simplified_ast_to_graph, graph_to_actions, actions_to_graph
@@ -50,20 +92,20 @@ class TestASTReconstruction:
         # Convert back to graph
         reconstructed_graph = actions_to_graph(actions)
 
-        # Debug: print the reconstructed graph structure
-        print(f"\n=== {test_name} ===")
-        print("Reconstructed graph nodes:")
+        # Debug: log.info the reconstructed graph structure
+        log.info(f"\n=== {test_name} ===")
+        log.info("Reconstructed graph nodes:")
         for i, node in enumerate(reconstructed_graph["nodes"]):
-            print(f"  {i}: {node}")
-        print("Reconstructed graph edges:")
+            log.info(f"  {i}: {node}")
+        log.info("Reconstructed graph edges:")
         for edge in reconstructed_graph["edges"]:
-            print(f"  {edge}")
+            log.info(f"  {edge}")
 
         # Convert to code
         final_code = ASTSimplifier.ast_to_program(reconstructed_graph)
 
-        # Debug: print the final code
-        print(f"Final code:\n{final_code}")
+        # Debug: log.info the final code
+        log.info(f"Final code:\n{final_code}")
 
         # Basic validation
         assert "def program(" in final_code, f"Missing function definition in {test_name}"
@@ -195,13 +237,22 @@ class TestASTReconstruction:
         graph = simplified_ast_to_graph(simple_code)
         actions = graph_to_actions(graph)
 
-        # Should have: PROD_FUNCTION_DEF, PROD_RETURN, PROD_VARIABLE, SET_VAR_ID, EOS
-        assert len(actions) == 5
-        assert actions[0].kind == ActionKind.PROD_FUNCTION_DEF
-        assert actions[1].kind == ActionKind.PROD_RETURN
-        assert actions[2].kind == ActionKind.PROD_VARIABLE
-        assert actions[3].kind == ActionKind.SET_VAR_ID
-        assert actions[4].kind == ActionKind.EOS
+        # Should contain core tokens in order: PROD_FUNCTION_DEF ... PROD_RETURN ... PROD_VARIABLE ... SET_VAR_ID ... EOS
+        kinds = [a.kind for a in actions]
+        assert kinds[0] == ActionKind.PROD_FUNCTION_DEF
+        assert kinds[-1] == ActionKind.EOS
+        # Verify required subsequence appears in order
+        def index_of(kind, start=0):
+            for i in range(start, len(kinds)):
+                if kinds[i] == kind:
+                    return i
+            return -1
+        i_ret = index_of(ActionKind.PROD_RETURN, 1)
+        assert i_ret != -1
+        i_var = index_of(ActionKind.PROD_VARIABLE, i_ret + 1)
+        assert i_var != -1
+        i_set = index_of(ActionKind.SET_VAR_ID, i_var + 1)
+        assert i_set != -1
 
         # Test binary operation
         binop_code = "def program(n):\n    return n + 1"
@@ -359,9 +410,7 @@ def test_registry_programs_roundtrip():
 
     for name, spec in registry.programs.items():
         code = spec.implementation
-
-        # Reversed range and method calls should now roundtrip
-
+        log.info(f"Testing program '{name}'")
         # Build simplified graph compatible with grammar actions
         graph = simplified_ast_to_graph(code)
 
@@ -374,7 +423,7 @@ def test_registry_programs_roundtrip():
 
         # Graph -> code
         final_code = ASTSimplifier.ast_to_program(reconstructed_graph)
-        print(f"Final code:\n{final_code}")
+        log.info(f"Final code:\n{final_code}")
         # The reconstructed code should be syntactically valid Python
         try:
             import ast as _pyast
@@ -382,3 +431,13 @@ def test_registry_programs_roundtrip():
         except SyntaxError as e:
             import pytest
             pytest.fail(f"Reconstructed code not parseable for program '{name}': {e}\nCode:\n{final_code}")
+
+        # Execute reconstructed program against all base examples with a timeout to avoid infinite loops
+        for ex in spec.base_examples:
+            try:
+                result = run_with_timeout(final_code, ex.input, timeout_s=1.0)
+            except TimeoutError as te:
+                import pytest
+                pytest.fail(f"Program '{name}' timed out for input {ex.input} within 1s: {te}\nCode:\n{final_code}")
+            assert result == ex.output, f"Program '{name}' failed example {ex.input}: expected {ex.output}, got {result}\nCode:\n{final_code}"
+            log.info(f"\tTesting input {ex.input} ✅")
