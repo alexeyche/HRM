@@ -29,6 +29,7 @@ dependencies = [
     "ipykernel>=6.29.5",
     "torch-geometric>=2.6.1",
     "pytest>=8.3.5",
+    "pytest-cov>=5.0.0",
 ]
 
 [project.optional-dependencies]

@@ -501,3 +501,245 @@ class ASTSimplifier:
 
         return {"nodes": graph.nodes, "edges": graph.edges, "root": root_index}
 
+    @staticmethod
+    def _build_children_lists(num_nodes: int, edges: List[Dict[str, Any]]) -> Dict[int, List[int]]:
+        """Build a map from parent node index to list of child node indices."""
+        children: Dict[int, List[int]] = {}
+        next_siblings: Dict[int, List[int]] = {}
+
+        for i in range(num_nodes):
+            children[i] = []
+            next_siblings[i] = []
+
+        for edge in edges:
+            src = edge["src"]
+            dst = edge["dst"]
+            edge_type = edge["edge_type"]
+
+            if edge_type == EdgeType.AST.value:
+                children[src].append(dst)
+            elif edge_type == EdgeType.NEXT_SIBLING.value:
+                next_siblings[src].append(dst)
+
+        # Sort children by NEXT_SIBLING order
+        for parent_idx, child_list in children.items():
+            if len(child_list) > 1:
+                # Reconstruct the order using NEXT_SIBLING edges
+                ordered_children = []
+                current = child_list[0]
+                visited = set()
+
+                while current is not None and current not in visited:
+                    visited.add(current)
+                    ordered_children.append(current)
+                    # Find next sibling
+                    next_sibs = next_siblings.get(current, [])
+                    current = next_sibs[0] if next_sibs else None
+
+                # Add any remaining children that weren't in the sibling chain
+                for child in child_list:
+                    if child not in visited:
+                        ordered_children.append(child)
+
+                children[parent_idx] = ordered_children
+
+        return children
+
+    @staticmethod
+    def ast_to_program(graph: Dict[str, Any]) -> str:
+        """Convert AST graph back to Python code string.
+
+        This is a simplified reconstruction that handles the core language constructs
+        supported by our AST representation.
+        """
+        nodes = graph["nodes"]
+        edges = graph["edges"]
+
+        # Build children map for efficient traversal
+        children = ASTSimplifier._build_children_lists(len(nodes), edges)
+
+        # Start from the module node (index 0)
+        module_idx = 0
+
+        def reconstruct_node(idx: int) -> str:
+            """Recursively reconstruct a node and its children."""
+            if idx >= len(nodes):
+                return f"# <invalid_node_{idx}>"
+
+            node = nodes[idx]
+            node_type = node["type"]
+
+            # Get children in order
+            node_children = children.get(idx, [])
+
+            if node_type == "module":
+                # Module contains function definitions
+                if node_children:
+                    return "\n".join(reconstruct_node(child) for child in node_children)
+                return ""
+
+            elif node_type == "function_def":
+                name = node.get("name", "program")
+                params = node.get("params", ["n"])
+                param_str = ", ".join(params)
+
+                # Get function body statements
+                body_stmts = []
+                for child in node_children:
+                    body_stmts.append(reconstruct_node(child))
+
+                body = "\n    ".join(body_stmts)
+                if body:
+                    body = "\n    " + body + "\n"
+
+                return f"def {name}({param_str}):{body}"
+
+            elif node_type == "return":
+                if node_children:
+                    value = reconstruct_node(node_children[0])
+                    return f"return {value}"
+                return "return"
+
+            elif node_type == "assignment":
+                if len(node_children) >= 2:
+                    target = reconstruct_node(node_children[0])
+                    value = reconstruct_node(node_children[1])
+                    return f"{target} = {value}"
+                return "# <invalid_assignment>"
+
+            elif node_type == "augmented_assignment":
+                op = node.get("op", "+=")
+                if len(node_children) >= 2:
+                    target = reconstruct_node(node_children[0])
+                    value = reconstruct_node(node_children[1])
+                    return f"{target} {op} {value}"
+                return f"# <invalid_augmented_assignment_{op}>"
+
+            elif node_type == "if":
+                if len(node_children) >= 2:
+                    condition = reconstruct_node(node_children[0])
+                    body = reconstruct_node(node_children[1])
+
+                    # Check if there's an else clause
+                    else_body = ""
+                    if len(node_children) >= 3:
+                        else_body = f"\nelse:\n    {reconstruct_node(node_children[2])}"
+
+                    return f"if {condition}:\n    {body}{else_body}"
+                return "# <invalid_if>"
+
+            elif node_type == "for":
+                if len(node_children) >= 3:
+                    target = reconstruct_node(node_children[0])
+                    iterator = reconstruct_node(node_children[1])
+                    body = reconstruct_node(node_children[2])
+                    return f"for {target} in {iterator}:\n    {body}"
+                elif len(node_children) >= 2:
+                    iterator = reconstruct_node(node_children[0])
+                    body = reconstruct_node(node_children[1])
+                    return f"for i in {iterator}:\n    {body}"
+                return "# <invalid_for>"
+
+            elif node_type == "while":
+                if len(node_children) >= 2:
+                    condition = reconstruct_node(node_children[0])
+                    body = reconstruct_node(node_children[1])
+                    return f"while {condition}:\n    {body}"
+                return "# <invalid_while>"
+
+            elif node_type == "variable":
+                # Use the actual variable name if available, otherwise fall back to var_id
+                var_name = node.get("name")
+                if var_name:
+                    return var_name
+                else:
+                    var_id = node.get("var_id", 0)
+                    return f"var_{var_id}"
+
+            elif node_type == "constant":
+                value = node.get("value")
+                dtype = node.get("dtype", "int")
+
+                if dtype == "str":
+                    return f'"{value}"'
+                elif dtype == "bool":
+                    return str(value)
+                else:  # int or default
+                    return str(value)
+
+            elif node_type == "binary_operation":
+                op = node.get("op", "+")
+                if len(node_children) >= 2:
+                    left = reconstruct_node(node_children[0])
+                    right = reconstruct_node(node_children[1])
+                    return f"({left} {op} {right})"
+                return f"# <invalid_binary_op_{op}>"
+
+            elif node_type == "unary_operation":
+                op = node.get("op", "-")
+                if node_children:
+                    operand = reconstruct_node(node_children[0])
+                    return f"{op}{operand}"
+                return f"# <invalid_unary_op_{op}>"
+
+            elif node_type == "comparison":
+                op = node.get("op", "==")
+                if len(node_children) >= 2:
+                    left = reconstruct_node(node_children[0])
+                    right = reconstruct_node(node_children[1])
+                    return f"({left} {op} {right})"
+                return f"# <invalid_comparison_{op}>"
+
+            elif node_type == "boolean_operation":
+                op = node.get("op", "and")
+                if len(node_children) >= 2:
+                    left = reconstruct_node(node_children[0])
+                    right = reconstruct_node(node_children[1])
+                    return f"({left} {op} {right})"
+                return f"# <invalid_boolean_op_{op}>"
+
+            elif node_type == "function_call":
+                func_name = node.get("function", "unknown")
+                if node_children:
+                    args = [reconstruct_node(child) for child in node_children]
+                    args_str = ", ".join(args)
+                    return f"{func_name}({args_str})"
+                return f"{func_name}()"
+
+            elif node_type == "list":
+                if node_children:
+                    elements = [reconstruct_node(child) for child in node_children]
+                    return f"[{', '.join(elements)}]"
+                return "[]"
+
+            elif node_type == "attribute":
+                attr_name = node.get("attr", "unknown")
+                if node_children:
+                    obj = reconstruct_node(node_children[0])
+                    return f"{obj}.{attr_name}"
+                return f"# <invalid_attribute_{attr_name}>"
+
+            elif node_type == "subscript":
+                if len(node_children) >= 2:
+                    value = reconstruct_node(node_children[0])
+                    slice_expr = reconstruct_node(node_children[1])
+                    return f"{value}[{slice_expr}]"
+                return "# <invalid_subscript>"
+
+            elif node_type == "expression":
+                if node_children:
+                    return reconstruct_node(node_children[0])
+                return "# <empty_expression>"
+
+            else:
+                return f"# <unknown_node_type_{node_type}>"
+
+        # Start reconstruction from the module
+        result = reconstruct_node(module_idx)
+
+        # Clean up the result
+        if result.startswith("#"):
+            return "# <failed_reconstruction>"
+
+        return result
+
