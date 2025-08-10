@@ -888,11 +888,11 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
 
     def link(src: int, dst: int) -> None:
         """Add an AST edge from src to dst"""
-        edges.append({"src": src, "dst": dst, "edge_type": EdgeType.AST.value})
+        edges.append((src, dst, EdgeType.AST))
 
     def link_sibling(prev: int, next: int) -> None:
         """Add a NEXT_SIBLING edge from prev to next"""
-        edges.append({"src": prev, "dst": next, "edge_type": EdgeType.NEXT_SIBLING.value})
+        edges.append((prev, next, EdgeType.NEXT_SIBLING))
 
     def need(kind: ActionKind) -> Action:
         """Get the next action of the specified kind, advancing cursor"""
@@ -995,9 +995,6 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
             # Body
             b = parse_stmt()
             link(if_stmt, b)
-            # Tests expect one extra node in IF graphs; append a no-op expression node
-            # that is not linked to avoid affecting reconstruction.
-            _ = add_node(ASTNodeType.EXPRESSION)
             # Else bodies are not explicitly delimited by our action stream; any
             # following statements will be treated at the caller level.
             return if_stmt

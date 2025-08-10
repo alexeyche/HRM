@@ -157,7 +157,8 @@ class TestASTReconstruction:
         ]
 
         graph = actions_to_graph(if_actions)
-        assert len(graph["nodes"]) == 7
+        # With human-readable IR (no IF sentinel), we expect 6 nodes
+        assert len(graph["nodes"]) == 6
         assert graph["nodes"][2]["type"] == ASTNodeType.IF
 
     def test_actions_to_graph_error_handling(self):

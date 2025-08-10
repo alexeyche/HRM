@@ -716,6 +716,11 @@ class ASTSimplifier:
 
             elif node_type == "function_call":
                 func_name = node.get("function", "unknown")
+                # Human-friendly rewrite: getitem(a,b) -> a[b]
+                if func_name == "getitem" and len(node_children) >= 2:
+                    value = reconstruct_node(node_children[0])
+                    index = reconstruct_node(node_children[1])
+                    return f"{value}[{index}]"
                 if node_children:
                     args = [reconstruct_node(child) for child in node_children]
                     args_str = ", ".join(args)
