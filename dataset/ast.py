@@ -512,9 +512,15 @@ class ASTSimplifier:
             next_siblings[i] = []
 
         for edge in edges:
-            src = edge["src"]
-            dst = edge["dst"]
-            edge_type = edge["edge_type"]
+            # Support both dict-form and tuple-form edges
+            if isinstance(edge, tuple) and len(edge) == 3:
+                src, dst, et = edge
+                edge_type = et.value if isinstance(et, Enum) else et
+            else:
+                src = edge["src"]
+                dst = edge["dst"]
+                et = edge["edge_type"]
+                edge_type = et.value if isinstance(et, Enum) else et
 
             if edge_type == EdgeType.AST.value:
                 children[src].append(dst)
@@ -561,6 +567,13 @@ class ASTSimplifier:
         # Start from the module node (index 0)
         module_idx = 0
 
+        def indent_block(text: str, levels: int = 1) -> str:
+            pad = "    " * levels
+            lines = text.splitlines()
+            if not lines:
+                return pad
+            return "\n".join(pad + line if line else pad for line in lines)
+
         def reconstruct_node(idx: int) -> str:
             """Recursively reconstruct a node and its children."""
             if idx >= len(nodes):
@@ -568,6 +581,8 @@ class ASTSimplifier:
 
             node = nodes[idx]
             node_type = node["type"]
+            if isinstance(node_type, ASTNodeType):
+                node_type = node_type.value
 
             # Get children in order
             node_children = children.get(idx, [])
@@ -588,9 +603,10 @@ class ASTSimplifier:
                 for child in node_children:
                     body_stmts.append(reconstruct_node(child))
 
-                body = "\n    ".join(body_stmts)
+                body_text = "\n".join(body_stmts)
+                body = indent_block(body_text, levels=1)
                 if body:
-                    body = "\n    " + body + "\n"
+                    body = "\n" + body + "\n"
 
                 return f"def {name}({param_str}):{body}"
 
@@ -618,33 +634,33 @@ class ASTSimplifier:
             elif node_type == "if":
                 if len(node_children) >= 2:
                     condition = reconstruct_node(node_children[0])
-                    body = reconstruct_node(node_children[1])
+                    body = indent_block(reconstruct_node(node_children[1]), levels=1)
 
                     # Check if there's an else clause
                     else_body = ""
                     if len(node_children) >= 3:
-                        else_body = f"\nelse:\n    {reconstruct_node(node_children[2])}"
+                        else_body = "\nelse:\n" + indent_block(reconstruct_node(node_children[2]), levels=1)
 
-                    return f"if {condition}:\n    {body}{else_body}"
+                    return f"if {condition}:\n{body}{else_body}"
                 return "# <invalid_if>"
 
             elif node_type == "for":
                 if len(node_children) >= 3:
                     target = reconstruct_node(node_children[0])
                     iterator = reconstruct_node(node_children[1])
-                    body = reconstruct_node(node_children[2])
-                    return f"for {target} in {iterator}:\n    {body}"
+                    body = indent_block(reconstruct_node(node_children[2]), levels=1)
+                    return f"for {target} in {iterator}:\n{body}"
                 elif len(node_children) >= 2:
                     iterator = reconstruct_node(node_children[0])
-                    body = reconstruct_node(node_children[1])
-                    return f"for i in {iterator}:\n    {body}"
+                    body = indent_block(reconstruct_node(node_children[1]), levels=1)
+                    return f"for i in {iterator}:\n{body}"
                 return "# <invalid_for>"
 
             elif node_type == "while":
                 if len(node_children) >= 2:
                     condition = reconstruct_node(node_children[0])
-                    body = reconstruct_node(node_children[1])
-                    return f"while {condition}:\n    {body}"
+                    body = indent_block(reconstruct_node(node_children[1]), levels=1)
+                    return f"while {condition}:\n{body}"
                 return "# <invalid_while>"
 
             elif node_type == "variable":
