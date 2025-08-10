@@ -41,6 +41,8 @@ class ActionKind(str, Enum):
     SET_ATTRIBUTE_NAME = "SET_ATTRIBUTE_NAME"  # value: str
     SET_PARAMS = "SET_PARAMS"        # value: List[str]
     SET_ELSE_BODY = "SET_ELSE_BODY"  # value: bool (has else clause)
+    SET_ARG_LEN = "SET_ARG_LEN"      # value: int (number of function call arguments)
+    SET_LIST_LEN = "SET_LIST_LEN"    # value: int (number of list elements)
 
     # Special tokens (reserved for later decoding use)
     BOS = "BOS"
@@ -68,6 +70,7 @@ class ParserRole(str, Enum):
     IF_COND = "IF_COND"
     IF_BODY = "IF_BODY"
     FOR_ITER = "FOR_ITER"
+    FOR_TARGET = "FOR_TARGET"
     FOR_BODY = "FOR_BODY"
     WHILE_COND = "WHILE_COND"
     WHILE_BODY = "WHILE_BODY"
@@ -211,6 +214,21 @@ class ParserState:
                 ActionKind.PROD_ATTRIBUTE,
                 ActionKind.PROD_SUBSCRIPT
             ])
+        elif top_role == ParserRole.FOR_TARGET:
+            valid.update([
+                ActionKind.PROD_VARIABLE,
+                ActionKind.PROD_CONSTANT_INT,
+                ActionKind.PROD_CONSTANT_BOOL,
+                ActionKind.PROD_CONSTANT_STR,
+                ActionKind.PROD_BINARY_OP,
+                ActionKind.PROD_UNARY_OP,
+                ActionKind.PROD_COMPARISON,
+                ActionKind.PROD_BOOLEAN_OP,
+                ActionKind.PROD_FUNCTION_CALL,
+                ActionKind.PROD_LIST,
+                ActionKind.PROD_ATTRIBUTE,
+                ActionKind.PROD_SUBSCRIPT
+            ])
         elif top_role == ParserRole.FOR_BODY:
             valid.update([
                 ActionKind.PROD_RETURN,
@@ -278,7 +296,9 @@ class ParserState:
             ActionKind.SET_FUNCTION_NAME,
             ActionKind.SET_ATTRIBUTE_NAME,
             ActionKind.SET_PARAMS,
-            ActionKind.SET_ELSE_BODY
+            ActionKind.SET_ELSE_BODY,
+            ActionKind.SET_ARG_LEN,
+            ActionKind.SET_LIST_LEN,
         ])
 
         return valid
@@ -296,7 +316,9 @@ class ParserState:
             ActionKind.SET_FUNCTION_NAME,
             ActionKind.SET_ATTRIBUTE_NAME,
             ActionKind.SET_PARAMS,
-            ActionKind.SET_ELSE_BODY
+            ActionKind.SET_ELSE_BODY,
+            ActionKind.SET_ARG_LEN,
+            ActionKind.SET_LIST_LEN,
         ]:
             # Attribute-setting actions don't affect the parser stack
             # They just set metadata for the current context
@@ -364,8 +386,8 @@ class ParserState:
             # Push IF_COND, IF_BODY, and optionally another IF_BODY for else
             new_roles = [ParserRole.IF_COND, ParserRole.IF_BODY]
         elif action.kind == ActionKind.PROD_FOR:
-            # Push FOR_ITER and FOR_BODY
-            new_roles = [ParserRole.FOR_ITER, ParserRole.FOR_BODY]
+            # Push FOR_TARGET, FOR_ITER and FOR_BODY
+            new_roles = [ParserRole.FOR_TARGET, ParserRole.FOR_ITER, ParserRole.FOR_BODY]
         elif action.kind == ActionKind.PROD_WHILE:
             # Push WHILE_COND and WHILE_BODY
             new_roles = [ParserRole.WHILE_COND, ParserRole.WHILE_BODY]
@@ -575,7 +597,28 @@ def simplified_ast_to_graph(code: str) -> Dict[str, Any]:
             return idx
 
         elif isinstance(node, ast.Call):
-            idx = add_node(ASTNodeType.FUNCTION_CALL, function=node.func.id if isinstance(node.func, ast.Name) else "unknown")
+            # Support simple function calls and method calls (attribute calls)
+            func_name: str = "unknown"
+            args: List[int] = []
+
+            # If the callee is a Name, use it directly
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            # If the callee is an Attribute (method call), encode as a function
+            # where the first argument is the object, and the function name is the attribute
+            elif isinstance(node.func, ast.Attribute):
+                func_name = node.func.attr
+                # Add the object as the first argument
+                obj_idx = add(node.func.value)
+                args.append(obj_idx)
+
+            idx = add_node(ASTNodeType.FUNCTION_CALL, function=func_name)
+
+            # Link any synthesized first-argument (for method calls)
+            for a_idx in args:
+                link(idx, a_idx)
+
+            # Then link the actual call arguments
             for arg in node.args:
                 a = add(arg, idx)
                 link(idx, a)
@@ -615,6 +658,9 @@ def simplified_ast_to_graph(code: str) -> Dict[str, Any]:
 
         elif isinstance(node, ast.For):
             idx = add_node(ASTNodeType.FOR)
+            # Encode target first, then iterator, then body
+            target_expr = add(node.target, idx)
+            link(idx, target_expr)
             iter_expr = add(node.iter, idx)
             link(idx, iter_expr)
             for stmt in node.body:
@@ -638,6 +684,14 @@ def simplified_ast_to_graph(code: str) -> Dict[str, Any]:
                 link(idx, e)
             return idx
 
+        elif isinstance(node, ast.Tuple):
+            # Represent tuples as LIST nodes to support tuple assignment lowering
+            idx = add_node(ASTNodeType.LIST)
+            for elt in node.elts:
+                e = add(elt, idx)
+                link(idx, e)
+            return idx
+
         elif isinstance(node, ast.Attribute):
             idx = add_node(ASTNodeType.ATTRIBUTE, attr=node.attr)
             obj = add(node.value, idx)
@@ -651,6 +705,19 @@ def simplified_ast_to_graph(code: str) -> Dict[str, Any]:
             link(idx, value)
             link(idx, slice_val)
             return idx
+
+        elif isinstance(node, ast.Slice):
+            # Normalize slice a[b:c:d] as a function call slice(b, c, d)
+            call_idx = add_node(ASTNodeType.FUNCTION_CALL, function="slice")
+            parts = [node.lower, node.upper, node.step]
+            for part in parts:
+                if part is None:
+                    # Represent None explicitly
+                    a = add(ast.Constant(value=None), call_idx)  # type: ignore[name-defined]
+                else:
+                    a = add(part, call_idx)
+                link(call_idx, a)
+            return call_idx
 
         elif isinstance(node, ast.Expr):
             idx = add_node(ASTNodeType.EXPRESSION)
@@ -732,12 +799,16 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
 
         elif ntype == ASTNodeType.FOR:
             actions.append(Action(ActionKind.PROD_FOR))
-            # Iterator first
+            # Target then iterator, then body statements
             child_list = children.get(idx, [])
             if child_list:
+                # Target
                 emit_expr(child_list[0])
+                # Iterator
+                if len(child_list) >= 2:
+                    emit_expr(child_list[1])
                 # Then body statements
-                for child_idx in child_list[1:]:
+                for child_idx in child_list[2:]:
                     emit_stmt(child_idx)
 
         elif ntype == ASTNodeType.WHILE:
@@ -820,14 +891,17 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
         elif ntype == ASTNodeType.FUNCTION_CALL:
             actions.append(Action(ActionKind.PROD_FUNCTION_CALL))
             actions.append(Action(ActionKind.SET_FUNCTION_NAME, node.get("function", "unknown")))
-            # Arguments
-            for child_idx in children.get(idx, []):
+            # Arguments with explicit count to disambiguate empty vs missing
+            arg_list = children.get(idx, [])
+            actions.append(Action(ActionKind.SET_ARG_LEN, len(arg_list)))
+            for child_idx in arg_list:
                 emit_expr(child_idx)
 
         elif ntype == ASTNodeType.LIST:
             actions.append(Action(ActionKind.PROD_LIST))
-            # List elements
-            for child_idx in children.get(idx, []):
+            elts = children.get(idx, [])
+            actions.append(Action(ActionKind.SET_LIST_LEN, len(elts)))
+            for child_idx in elts:
                 emit_expr(child_idx)
 
         elif ntype == ASTNodeType.ATTRIBUTE:
@@ -842,10 +916,11 @@ def graph_to_actions(graph: Dict[str, Any]) -> List[Action]:
             actions.append(Action(ActionKind.PROD_FUNCTION_CALL))
             actions.append(Action(ActionKind.SET_FUNCTION_NAME, "getitem"))
             child_list = children.get(idx, [])
-            if len(child_list) >= 2:
-                # First argument: value
+            # Emit explicit argument length to bound parsing
+            actions.append(Action(ActionKind.SET_ARG_LEN, min(2, len(child_list))))
+            if len(child_list) >= 1:
                 emit_expr(child_list[0])
-                # Second argument: index/slice
+            if len(child_list) >= 2:
                 emit_expr(child_list[1])
 
         elif ntype == ASTNodeType.EXPRESSION:
@@ -1002,6 +1077,9 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
         elif a.kind == ActionKind.PROD_FOR:
             cursor += 1
             for_stmt = add_node(ASTNodeType.FOR)
+            # Target
+            t = parse_expr()
+            link(for_stmt, t)
             # Iterator
             i = parse_expr()
             link(for_stmt, i)
@@ -1024,8 +1102,10 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
         elif a.kind == ActionKind.PROD_EXPRESSION:
             cursor += 1
             expr = add_node(ASTNodeType.EXPRESSION)
-            e = parse_expr()
-            link(expr, e)
+            # Only parse inner expression if next token starts an expression
+            if cursor < len(actions) and actions[cursor].kind in EXPR_STARTERS:
+                e = parse_expr()
+                link(expr, e)
             return expr
 
         else:
@@ -1074,10 +1154,14 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
 
             # Parse left and right operands
             left = parse_expr()
-            right = parse_expr()
+            # Right operand may be absent in malformed streams; guard on starters
+            right = None
+            if cursor < len(actions) and actions[cursor].kind in EXPR_STARTERS:
+                right = parse_expr()
 
             link(bin_op, left)
-            link(bin_op, right)
+            if right is not None:
+                link(bin_op, right)
             return bin_op
 
         elif a.kind == ActionKind.PROD_UNARY_OP:
@@ -1097,10 +1181,13 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
 
             # Parse left and right operands
             left = parse_expr()
-            right = parse_expr()
+            right = None
+            if cursor < len(actions) and actions[cursor].kind in EXPR_STARTERS:
+                right = parse_expr()
 
             link(comp, left)
-            link(comp, right)
+            if right is not None:
+                link(comp, right)
             return comp
 
         elif a.kind == ActionKind.PROD_BOOLEAN_OP:
@@ -1110,10 +1197,13 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
 
             # Parse left and right operands
             left = parse_expr()
-            right = parse_expr()
+            right = None
+            if cursor < len(actions) and actions[cursor].kind in EXPR_STARTERS:
+                right = parse_expr()
 
             link(bool_op, left)
-            link(bool_op, right)
+            if right is not None:
+                link(bool_op, right)
             return bool_op
 
         elif a.kind == ActionKind.PROD_FUNCTION_CALL:
@@ -1123,18 +1213,25 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
 
             # Parse arguments
             args = []
-            while cursor < len(actions) and actions[cursor].kind not in [
-                ActionKind.EOS, ActionKind.PROD_RETURN, ActionKind.PROD_ASSIGNMENT,
-                ActionKind.PROD_AUGMENTED_ASSIGNMENT, ActionKind.PROD_IF, ActionKind.PROD_FOR,
-                ActionKind.PROD_WHILE, ActionKind.PROD_EXPRESSION
-            ]:
-                arg = parse_expr()
-                args.append(arg)
-                link(func_call, arg)
-
-                # Link arguments with NEXT_SIBLING edges to maintain order
-                if len(args) > 1:
-                    link_sibling(args[-2], args[-1])
+            # Optional count prefix
+            arg_count = None
+            if cursor < len(actions) and actions[cursor].kind == ActionKind.SET_ARG_LEN:
+                arg_count = int(need(ActionKind.SET_ARG_LEN).value)  # type: ignore[attr-defined]
+            if arg_count is None:
+                # Fallback to sentinel-based parsing
+                while cursor < len(actions) and actions[cursor].kind in EXPR_STARTERS:
+                    arg = parse_expr()
+                    args.append(arg)
+                    link(func_call, arg)
+                    if len(args) > 1:
+                        link_sibling(args[-2], args[-1])
+            else:
+                for _ in range(arg_count):
+                    arg = parse_expr()
+                    args.append(arg)
+                    link(func_call, arg)
+                    if len(args) > 1:
+                        link_sibling(args[-2], args[-1])
 
             return func_call
 
@@ -1144,18 +1241,23 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
 
             # Parse list elements
             elements = []
-            while cursor < len(actions) and actions[cursor].kind not in [
-                ActionKind.EOS, ActionKind.PROD_RETURN, ActionKind.PROD_ASSIGNMENT,
-                ActionKind.PROD_AUGMENTED_ASSIGNMENT, ActionKind.PROD_IF, ActionKind.PROD_FOR,
-                ActionKind.PROD_WHILE, ActionKind.PROD_EXPRESSION
-            ]:
-                elem = parse_expr()
-                elements.append(elem)
-                link(list_node, elem)
-
-                # Link elements with NEXT_SIBLING edges to maintain order
-                if len(elements) > 1:
-                    link_sibling(elements[-2], elements[-1])
+            elt_count = None
+            if cursor < len(actions) and actions[cursor].kind == ActionKind.SET_LIST_LEN:
+                elt_count = need(ActionKind.SET_LIST_LEN).value  # type: ignore[attr-defined]
+            if elt_count is None:
+                while cursor < len(actions) and actions[cursor].kind in EXPR_STARTERS:
+                    elem = parse_expr()
+                    elements.append(elem)
+                    link(list_node, elem)
+                    if len(elements) > 1:
+                        link_sibling(elements[-2], elements[-1])
+            else:
+                for _ in range(int(elt_count)):
+                    elem = parse_expr()
+                    elements.append(elem)
+                    link(list_node, elem)
+                    if len(elements) > 1:
+                        link_sibling(elements[-2], elements[-1])
 
             return list_node
 
@@ -1180,6 +1282,20 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
             link(subscript, value)
             link(subscript, slice_expr)
             return subscript
+
+        elif a.kind == ActionKind.PROD_EXPRESSION:
+            # Allow expression wrappers inside expression context
+            cursor += 1
+            expr_node = add_node(ASTNodeType.EXPRESSION)
+            # Only parse inner expression if next token starts an expression
+            if cursor < len(actions) and actions[cursor].kind in EXPR_STARTERS:
+                inner = parse_expr()
+                link(expr_node, inner)
+            else:
+                # Attach a placeholder constant to avoid empty expression nodes
+                placeholder = add_node(ASTNodeType.CONSTANT, value=0, dtype="int")
+                link(expr_node, placeholder)
+            return expr_node
 
         else:
             raise ValueError(f"Unexpected action for EXPR at pos {cursor}: {a.kind}")

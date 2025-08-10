@@ -343,3 +343,42 @@ class TestASTReconstruction:
 
 # Import the Action and ActionKind classes for testing
 from dataset.grammar_actions import Action, ActionKind, ParserRole
+
+
+def test_registry_programs_roundtrip():
+    """Roundtrip all registry program implementations through the mini-language pipeline.
+
+    Ensures our grammar actions cover the constructs used across the default registry.
+    This checks: AST -> actions -> graph -> reconstructed code is syntactically valid.
+    """
+    from dataset.programs import get_program_registry
+    from dataset.grammar_actions import simplified_ast_to_graph, graph_to_actions, actions_to_graph, ActionKind
+    from dataset.ast import ASTSimplifier
+
+    registry = get_program_registry()
+
+    for name, spec in registry.programs.items():
+        code = spec.implementation
+
+        # Reversed range and method calls should now roundtrip
+
+        # Build simplified graph compatible with grammar actions
+        graph = simplified_ast_to_graph(code)
+
+        # Graph -> actions
+        actions = graph_to_actions(graph)
+        assert actions[-1].kind == ActionKind.EOS, f"Missing EOS for program {name}"
+
+        # Actions -> graph
+        reconstructed_graph = actions_to_graph(actions)
+
+        # Graph -> code
+        final_code = ASTSimplifier.ast_to_program(reconstructed_graph)
+        print(f"Final code:\n{final_code}")
+        # The reconstructed code should be syntactically valid Python
+        try:
+            import ast as _pyast
+            _pyast.parse(final_code)
+        except SyntaxError as e:
+            import pytest
+            pytest.fail(f"Reconstructed code not parseable for program '{name}': {e}\nCode:\n{final_code}")

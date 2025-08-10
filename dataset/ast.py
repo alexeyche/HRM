@@ -577,7 +577,7 @@ class ASTSimplifier:
         def reconstruct_node(idx: int) -> str:
             """Recursively reconstruct a node and its children."""
             if idx >= len(nodes):
-                return f"# <invalid_node_{idx}>"
+                raise ValueError(f"Invalid node index at node #{idx}")
 
             node = nodes[idx]
             node_type = node["type"]
@@ -586,6 +586,23 @@ class ASTSimplifier:
 
             # Get children in order
             node_children = children.get(idx, [])
+
+            def _is_invalid(code_str: str) -> bool:
+                if code_str is None:
+                    return True
+                stripped = code_str.strip()
+                if stripped == "":
+                    return True
+                # Treat our placeholders as invalid expressions in code positions
+                return stripped.startswith("#") or "<invalid" in stripped
+
+            def _raise_invalid(reason: str, node_idx: int, node_obj: Dict[str, Any]) -> None:
+                ntype = node_obj.get("type")
+                # Normalize enum types for display
+                if isinstance(ntype, ASTNodeType):
+                    ntype = ntype.value
+                child_count = len(children.get(node_idx, []))
+                raise ValueError(f"{reason} at node #{node_idx} (type={ntype}, children={child_count})")
 
             if node_type == "module":
                 # Module contains function definitions
@@ -599,9 +616,7 @@ class ASTSimplifier:
                 param_str = ", ".join(params)
 
                 # Get function body statements
-                body_stmts = []
-                for child in node_children:
-                    body_stmts.append(reconstruct_node(child))
+                body_stmts: List[str] = [reconstruct_node(child) for child in node_children]
 
                 body_text = "\n".join(body_stmts)
                 body = indent_block(body_text, levels=1)
@@ -620,8 +635,12 @@ class ASTSimplifier:
                 if len(node_children) >= 2:
                     target = reconstruct_node(node_children[0])
                     value = reconstruct_node(node_children[1])
+                    # If either side is invalid/comment placeholder, mark as invalid assignment
+                    if (not target) or target.lstrip().startswith("#") or (not value) or value.lstrip().startswith("#"):
+                        _raise_invalid("Invalid assignment", idx, node)
                     return f"{target} = {value}"
-                return "# <invalid_assignment>"
+                _raise_invalid("Invalid assignment (arity)", idx, node)
+                return ""
 
             elif node_type == "augmented_assignment":
                 op = node.get("op", "+=")
@@ -634,12 +653,21 @@ class ASTSimplifier:
             elif node_type == "if":
                 if len(node_children) >= 2:
                     condition = reconstruct_node(node_children[0])
-                    body = indent_block(reconstruct_node(node_children[1]), levels=1)
+                    if _is_invalid(condition):
+                        _raise_invalid("Invalid if condition", idx, node)
+                    body_code = reconstruct_node(node_children[1])
+                    # Ensure non-empty/non-comment body
+                    if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
+                        _raise_invalid("Invalid if body", idx, node)
+                    body = indent_block(body_code, levels=1)
 
                     # Check if there's an else clause
                     else_body = ""
                     if len(node_children) >= 3:
-                        else_body = "\nelse:\n" + indent_block(reconstruct_node(node_children[2]), levels=1)
+                        else_code = reconstruct_node(node_children[2])
+                        if _is_invalid(else_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in else_code.splitlines()):
+                            _raise_invalid("Invalid else body", idx, node)
+                        else_body = "\nelse:\n" + indent_block(else_code, levels=1)
 
                     return f"if {condition}:\n{body}{else_body}"
                 return "# <invalid_if>"
@@ -648,20 +676,39 @@ class ASTSimplifier:
                 if len(node_children) >= 3:
                     target = reconstruct_node(node_children[0])
                     iterator = reconstruct_node(node_children[1])
-                    body = indent_block(reconstruct_node(node_children[2]), levels=1)
+                    if _is_invalid(target):
+                        _raise_invalid("Invalid for target", idx, node)
+                    if _is_invalid(iterator):
+                        _raise_invalid("Invalid for iterator", idx, node)
+                    body_code = reconstruct_node(node_children[2])
+                    if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
+                        _raise_invalid("Invalid for body", idx, node)
+                    body = indent_block(body_code, levels=1)
                     return f"for {target} in {iterator}:\n{body}"
                 elif len(node_children) >= 2:
                     iterator = reconstruct_node(node_children[0])
-                    body = indent_block(reconstruct_node(node_children[1]), levels=1)
+                    if _is_invalid(iterator):
+                        _raise_invalid("Invalid for iterator", idx, node)
+                    body_code = reconstruct_node(node_children[1])
+                    if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
+                        _raise_invalid("Invalid for body", idx, node)
+                    body = indent_block(body_code, levels=1)
                     return f"for i in {iterator}:\n{body}"
-                return "# <invalid_for>"
+                _raise_invalid("Invalid for (arity)", idx, node)
+                return ""
 
             elif node_type == "while":
                 if len(node_children) >= 2:
                     condition = reconstruct_node(node_children[0])
-                    body = indent_block(reconstruct_node(node_children[1]), levels=1)
+                    if _is_invalid(condition):
+                        _raise_invalid("Invalid while condition", idx, node)
+                    body_code = reconstruct_node(node_children[1])
+                    if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
+                        _raise_invalid("Invalid while body", idx, node)
+                    body = indent_block(body_code, levels=1)
                     return f"while {condition}:\n{body}"
-                return "# <invalid_while>"
+                _raise_invalid("Invalid while (arity)", idx, node)
+                return ""
 
             elif node_type == "variable":
                 # Use the actual variable name if available, otherwise fall back to var_id
@@ -689,7 +736,9 @@ class ASTSimplifier:
                     left = reconstruct_node(node_children[0])
                     right = reconstruct_node(node_children[1])
                     return f"({left} {op} {right})"
-                return f"# <invalid_binary_op_{op}>"
+                # Fallback placeholder for missing operand to keep code parseable
+                left = reconstruct_node(node_children[0]) if node_children else "0"
+                return f"({left} {op} 0)"
 
             elif node_type == "unary_operation":
                 op = node.get("op", "-")
@@ -721,6 +770,16 @@ class ASTSimplifier:
                     value = reconstruct_node(node_children[0])
                     index = reconstruct_node(node_children[1])
                     return f"{value}[{index}]"
+
+                # Method-call pretty print for common patterns where we encoded
+                # an attribute call as FUNCTION_CALL with the object as arg[0]
+                method_like = {"append", "upper", "lower", "add", "extend", "insert", "pop", "clear"}
+                if func_name in method_like and len(node_children) >= 1:
+                    obj = reconstruct_node(node_children[0])
+                    call_args = [reconstruct_node(child) for child in node_children[1:]]
+                    args_str = ", ".join(call_args)
+                    return f"{obj}.{func_name}({args_str})"
+
                 if node_children:
                     args = [reconstruct_node(child) for child in node_children]
                     args_str = ", ".join(args)
@@ -744,13 +803,17 @@ class ASTSimplifier:
                 if len(node_children) >= 2:
                     value = reconstruct_node(node_children[0])
                     slice_expr = reconstruct_node(node_children[1])
+                    if _is_invalid(value) or _is_invalid(slice_expr):
+                        _raise_invalid("Invalid subscript", idx, node)
                     return f"{value}[{slice_expr}]"
-                return "# <invalid_subscript>"
+                _raise_invalid("Invalid subscript (arity)", idx, node)
+                return ""
 
             elif node_type == "expression":
                 if node_children:
                     return reconstruct_node(node_children[0])
-                return "# <empty_expression>"
+                _raise_invalid("Empty expression", idx, node)
+                return ""
 
             else:
                 return f"# <unknown_node_type_{node_type}>"
@@ -760,7 +823,7 @@ class ASTSimplifier:
 
         # Clean up the result
         if result.startswith("#"):
-            return "# <failed_reconstruction>"
+            raise ValueError("Failed reconstruction: top-level placeholder")
 
         return result
 
