@@ -4,9 +4,10 @@ from typing import Any, Dict, Optional, List
 
 from dataset.ast import ASTNodeType
 from dataset.encoding import GraphEncoder
+from torch import nn
+import torch
 
-
-class NodeFeatureBuilder:
+class NodeFeatureBuilder(nn.Module):
     """Composable node feature builder with three modes:
     - sum: sum of per-field embeddings/heads (fast, default)
     - concat: concatenate all parts then MLP to d_model
@@ -14,14 +15,7 @@ class NodeFeatureBuilder:
     """
 
     def __init__(self, d_model: int = 128, mode: str = "sum", num_attn_heads: int = 4, attn_layers: int = 1):
-        try:
-            import torch
-            import torch.nn as nn
-        except Exception as e:  # pragma: no cover
-            raise ImportError("PyTorch is required for NodeFeatureBuilder") from e
-
-        self.torch = torch
-        self.nn = nn
+        super().__init__()
         self.d_model = d_model
         self.mode = mode
 
@@ -31,8 +25,10 @@ class NodeFeatureBuilder:
         self.num_attn_heads = num_attn_heads
         self.attn_layers = attn_layers
 
+        # Eagerly build so that .to(device) on parent moves all parameters recursively
+        self._build(self.default_vocab_sizes())
+
     def _build(self, vocab_sizes: Dict[str, int]) -> None:
-        torch, nn = self.torch, self.nn
         d = self.d_model
 
         # Embeddings
@@ -57,6 +53,16 @@ class NodeFeatureBuilder:
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=self.attn_layers)
             self.attn_cls = nn.Parameter(torch.zeros(1, 1, d))
 
+        if self.mode == "concat":
+            # Pre-create projection with known input width: 12 parts each of width d
+            in_features = 12 * d
+            self.concat_proj = nn.Sequential(
+                nn.Linear(in_features, d),
+                nn.ReLU(),
+                nn.Linear(d, d)
+            )
+            self._concat_in = in_features  # for completeness
+
         self._built = True
 
     @staticmethod
@@ -66,7 +72,6 @@ class NodeFeatureBuilder:
         return ge.vocab_sizes()
 
     def forward(self, data: Any, vocab_sizes: Optional[Dict[str, int]] = None) -> Any:
-        torch, nn = self.torch, self.nn
         if not self._built:
             self._build(vocab_sizes or self.default_vocab_sizes())
 
@@ -101,11 +106,6 @@ class NodeFeatureBuilder:
         if self.mode == "concat":
             h = torch.cat(parts, dim=-1)
             d = self.d_model
-            in_features = h.shape[-1]
-            # lazily create projection matching current number of parts
-            if not hasattr(self, "concat_proj") or getattr(self, "_concat_in", None) != in_features:
-                self.concat_proj = self.nn.Sequential(self.nn.Linear(in_features, d), self.nn.ReLU(), self.nn.Linear(d, d))
-                self._concat_in = in_features
             h = self.concat_proj(h)
             return h
 
