@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
 import torch
 from torch import nn
@@ -155,6 +156,59 @@ class ProgramGenerator(nn.Module):
             num_actions=self.num_actions,
         )
 
+    @staticmethod
+    def _sanitize_identifier(name: Any, default: str) -> str:
+        """Return a safe Python identifier or a default fallback."""
+        try:
+            s = str(name)
+            import keyword as _keyword  # local import to avoid global dependency at module import time
+            if s.isidentifier() and not _keyword.iskeyword(s):
+                return s
+        except Exception:
+            pass
+        return default
+
+    @staticmethod
+    def _as_index(value: Any, default: int = 0) -> int:
+        try:
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            # Strings that are digits
+            if isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+                return int(value)
+        except Exception:
+            return default
+        return default
+
+    @staticmethod
+    def _as_bool(value: Any, default: bool = False) -> bool:
+        try:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            if isinstance(value, str):
+                lv = value.strip().lower()
+                if lv in {"true", "1", "yes"}:
+                    return True
+                if lv in {"false", "0", "no"}:
+                    return False
+        except Exception:
+            return default
+        return default
+
+    @staticmethod
+    def _as_str(value: Any, default: str = "") -> str:
+        try:
+            s = str(value)
+            return s
+        except Exception:
+            return default
+
     @torch.inference_mode()
     def build_valid_action_masks(self, batch_kind_ids: torch.Tensor) -> torch.Tensor:
         """Return mask tensor [B, T, num_actions] where True = valid, using ParserState per sequence."""
@@ -178,9 +232,9 @@ class ProgramGenerator(nn.Module):
                         # Ignore malformed prefixes during mask building
                         pass
                 valid = create_action_mask(state)
-                # If parser stack became empty due to consumption, reset to PROGRAM to allow EOS
+                # If parser stack became empty due to consumption, treat it as ready for another statement
                 if len(state.stack) == 0:
-                    state.stack = [ParserRole.PROGRAM]
+                    state.stack = [ParserRole.STMT]
                 for i, kind in enumerate(self.action_list):
                     masks[b, t, i] = bool(valid.get(kind, False))
         return masks
@@ -205,13 +259,22 @@ class ProgramGenerator(nn.Module):
                     pass
             valid = create_action_mask(state)
             if len(state.stack) == 0:
-                state.stack = [ParserRole.PROGRAM]
+                state.stack = [ParserRole.STMT]
             for i, kind in enumerate(self.action_list):
                 masks[b, i] = bool(valid.get(kind, False))
         return masks
 
     @torch.inference_mode()
-    def generate(self, memory: torch.Tensor, max_len: int = 128) -> List[List[Action]]:
+    def generate(
+        self,
+        memory: torch.Tensor,
+        max_len: int = 128,
+        *,
+        sampling: bool = True,
+        temperature: float = 1.0,
+        top_k: Optional[int] = None,
+        use_heuristics: bool = False,
+    ) -> List[List[Action]]:
         """Generate action sequences from context memory.
 
         memory: [B, d] or [B, L, d]; if [B, d], it will be expanded to [B, 1, d].
@@ -227,9 +290,16 @@ class ProgramGenerator(nn.Module):
         finished = torch.zeros((B,), dtype=torch.bool, device=device)
 
         out_actions: List[List[Action]] = [[] for _ in range(B)]
+        # Track known variable names per sequence; will be updated from SET_PARAMS.
+        known_names: List[List[str]] = [["n"] for _ in range(B)]
 
         # Use ParserState(strict) per sequence to control next actions
         parser_states = [ParserState(strict_decoding=True) for _ in range(B)]
+        # Track when an assignment target is pending to introduce a fresh variable name
+        assignment_target_pending: List[bool] = [False for _ in range(B)]
+        # Track whether the last produced variable token corresponds to a target position
+        pending_var_is_target: List[bool] = [False for _ in range(B)]
+        fresh_name_pool = ["x", "y", "z", "i", "j", "k", "a", "b", "c"]
 
         for t in range(1, max_len):
             kind_logits, dec_hidden = self.head.forward_step(memory, tokens[:, :t])
@@ -237,21 +307,87 @@ class ProgramGenerator(nn.Module):
 
             # Build strict grammar mask directly from ParserState
             valid_step = self.compute_valid_action_mask_next(tokens[:, :t])  # [B, A]
-            # Fallback: if a row has no valid action, prefer starting/ending tokens
+            # Fallback: if a row has no valid action, prefer starting a statement rather than EOS
             for b in range(B):
                 if not bool(valid_step[b].any().item()):
-                    # At first step, force function def; otherwise allow EOS
+                    # At first step, force function def; otherwise allow a minimal statement start
                     if t == 1:
                         def_idx = self.action_to_id.get(ActionKind.PROD_FUNCTION_DEF)
                         if def_idx is not None:
                             valid_step[b, def_idx] = True
                     else:
-                        eos_idx = self.action_to_id.get(ActionKind.EOS)
-                        if eos_idx is not None:
-                            valid_step[b, eos_idx] = True
+                        for k in (ActionKind.PROD_RETURN, ActionKind.PROD_ASSIGNMENT, ActionKind.PROD_EXPRESSION):
+                            idx = self.action_to_id.get(k)
+                            if idx is not None:
+                                valid_step[b, idx] = True
             step_logits = step_logits.masked_fill(~valid_step, float("-inf"))
 
-            pred = torch.argmax(step_logits, dim=-1)
+            # Heuristic priors to encourage certain choices (optional)
+            if use_heuristics:
+                mod_logits = step_logits.clone()
+                for b in range(B):
+                    if finished[b].item():
+                        continue
+                    state = parser_states[b]
+                    # Only apply when not waiting for a specific SET_* attribute
+                    if getattr(state, "expecting", []):
+                        continue
+                    try:
+                        top_role = state.peek()
+                    except Exception:
+                        top_role = ParserRole.PROGRAM
+                    stack_len = len(state.stack)
+                    def _boost(kind: ActionKind, delta: float) -> None:
+                        idx = self.action_to_id.get(kind)
+                        if idx is not None:
+                            mod_logits[b, idx] = mod_logits[b, idx] + float(delta)
+                    if top_role in (
+                        ParserRole.EXPR,
+                        ParserRole.IF_COND,
+                        ParserRole.FOR_ITER,
+                        ParserRole.WHILE_COND,
+                        ParserRole.ASSIGN_VALUE,
+                        ParserRole.EXPR_LIST,
+                        ParserRole.ARG_LIST,
+                    ):
+                        _boost(ActionKind.PROD_VARIABLE, 0.25)
+                        _boost(ActionKind.PROD_CONSTANT_INT, -0.15)
+                        _boost(ActionKind.PROD_BINARY_OP, 0.05)
+                    elif top_role in (ParserRole.ASSIGN_TARGET, ParserRole.NAME):
+                        _boost(ActionKind.PROD_VARIABLE, 0.25)
+                        _boost(ActionKind.PROD_CONSTANT_INT, -0.15)
+
+                    if top_role == ParserRole.STMT:
+                        _boost(ActionKind.PROD_RETURN, 0.05)
+                        _boost(ActionKind.PROD_ASSIGNMENT, 0.05)
+                        _boost(ActionKind.PROD_EXPRESSION, 0.05)
+
+                    if stack_len >= 8:
+                        _boost(ActionKind.PROD_FUNCTION_CALL, -0.25)
+                        _boost(ActionKind.PROD_LIST, -0.25)
+                        _boost(ActionKind.PROD_BINARY_OP, -0.2)
+                        _boost(ActionKind.PROD_UNARY_OP, -0.1)
+                        _boost(ActionKind.PROD_ATTRIBUTE, -0.1)
+                        _boost(ActionKind.PROD_SUBSCRIPT, -0.1)
+                        _boost(ActionKind.PROD_VARIABLE, 0.2)
+                        _boost(ActionKind.PROD_CONSTANT_INT, 0.2)
+            else:
+                mod_logits = step_logits
+
+            # Select next action: optionally sample for diversity
+            if sampling:
+                logits = mod_logits
+                if top_k is not None and top_k > 0:
+                    k = min(int(top_k), logits.shape[-1])
+                    _, topk_idx = torch.topk(logits, k=k, dim=-1)
+                    keep_mask = torch.zeros_like(logits, dtype=torch.bool)
+                    keep_mask.scatter_(1, topk_idx, True)
+                    logits = logits.masked_fill(~keep_mask, float("-inf"))
+                temp = float(temperature) if float(temperature) > 0 else 1.0
+                probs = torch.softmax(logits / temp, dim=-1)
+                pred = torch.multinomial(probs, num_samples=1).squeeze(-1)
+            else:
+                pred = torch.argmax(mod_logits, dim=-1)
             tokens[:, t] = pred
 
             # Values for SET_* from decoder hidden
@@ -265,39 +401,114 @@ class ProgramGenerator(nn.Module):
                     out_actions[b].append(Action(kind=kind))
                     continue
                 # Update parser state
+                top_before: Optional[ParserRole] = None
+                try:
+                    top_before = parser_states[b].peek()
+                except Exception:
+                    top_before = None
                 try:
                     new_roles = parser_states[b].apply_action(Action(kind))
-                    for role in reversed(new_roles):
-                        parser_states[b].push(role)
+                    # Avoid duplicating stack entries for productions that already replaced the top role
+                    if kind not in (ActionKind.PROD_FUNCTION_DEF, ActionKind.PROD_RETURN):
+                        for role in reversed(new_roles):
+                            parser_states[b].push(role)
                 except Exception:
                     # If invalid, force EOS next
                     finished[b] = True
                     out_actions[b].append(Action(kind=ActionKind.EOS))
                     continue
+                # If we just began an assignment, mark that the next variable name should define a new target
+                if kind == ActionKind.PROD_ASSIGNMENT:
+                    assignment_target_pending[b] = True
+                # If we just produced a variable at a target-bearing role, remember to name it fresh
+                if kind == ActionKind.PROD_VARIABLE and top_before in (
+                    ParserRole.ASSIGN_TARGET,
+                    ParserRole.FOR_TARGET,
+                    ParserRole.NAME,
+                ):
+                    pending_var_is_target[b] = True
+
                 if kind.name.startswith("SET_"):
-                    v = self.head.predict_value_from_hidden(hidden_t[b], kind)
+                    v_raw = self.head.predict_value_from_hidden(hidden_t[b], kind)
+                    # Post-process certain values for semantic sanity
+                    if kind == ActionKind.SET_PARAMS:
+                        # Ensure params is a non-empty list of identifiers; seed known names
+                        try:
+                            params = v_raw if isinstance(v_raw, list) else ["n"]
+                            params = [p if isinstance(p, str) and p.isidentifier() else "n" for p in params]
+                            if not params:
+                                params = ["n"]
+                        except Exception:
+                            params = ["n"]
+                        v = params
+                        # Deduplicate while preserving order
+                        seen = set()
+                        dedup: List[str] = []
+                        for name in params:
+                            if name not in seen:
+                                seen.add(name)
+                                dedup.append(name)
+                        known_names[b] = dedup
+                    elif kind == ActionKind.SET_VARIABLE_NAME:
+                        # Use scope-aware naming: introduce fresh name for targets, otherwise reference known
+                        if assignment_target_pending[b] or pending_var_is_target[b]:
+                            # Choose first unused fresh name; fallback to vN
+                            chosen = None
+                            for cand in fresh_name_pool:
+                                if cand not in known_names[b]:
+                                    chosen = cand
+                                    break
+                            if chosen is None:
+                                chosen = f"v{len(known_names[b])}"
+                            v = chosen
+                            known_names[b].append(chosen)
+                            assignment_target_pending[b] = False
+                            pending_var_is_target[b] = False
+                        else:
+                            if not known_names[b]:
+                                known_names[b] = ["n"]
+                            if sampling and len(known_names[b]) > 1:
+                                import random as _random
+                                v = _random.choice(known_names[b])
+                            else:
+                                v = known_names[b][0]
                     # Map categorical indices to tokens for some value types
                     if kind == ActionKind.SET_OP:
-                        v = self.op_tokens[int(v)] if 0 <= int(v) < len(self.op_tokens) else "+"
-                    if kind == ActionKind.SET_FUNCTION_NAME:
-                        v = self.fn_tokens[int(v)] if 0 <= int(v) < len(self.fn_tokens) else "program"
-                    if kind == ActionKind.SET_ATTRIBUTE_NAME:
-                        v = self.attr_tokens[int(v)] if 0 <= int(v) < len(self.attr_tokens) else "attr"
-                    if kind == ActionKind.SET_CONST_INT:
+                        idx = self._as_index(v_raw, 0)
+                        v = self.op_tokens[idx] if 0 <= idx < len(self.op_tokens) else "+"
+                    elif kind == ActionKind.SET_FUNCTION_NAME:
+                        idx = self._as_index(v_raw, 0)
+                        tok = self.fn_tokens[idx] if 0 <= idx < len(self.fn_tokens) else "program"
+                        v = self._sanitize_identifier(tok, "program")
+                    elif kind == ActionKind.SET_ATTRIBUTE_NAME:
+                        idx = self._as_index(v_raw, 0)
+                        tok = self.attr_tokens[idx] if 0 <= idx < len(self.attr_tokens) else "attr"
+                        v = self._sanitize_identifier(tok, "attr")
+                    elif kind == ActionKind.SET_CONST_INT:
+                        idx = self._as_index(v_raw, 0)
                         try:
-                            v = int(self.small_int_tokens[int(v)])
+                            v = int(self.small_int_tokens[idx])
                         except Exception:
                             v = 0
+                    elif kind == ActionKind.SET_CONST_BOOL:
+                        v = self._as_bool(v_raw, False)
+                    elif kind == ActionKind.SET_CONST_STR:
+                        v = self._as_str(v_raw, "")
+                    elif kind == ActionKind.SET_ARG_LEN:
+                        v = max(0, min(5, self._as_index(v_raw, 0)))
+                    elif kind == ActionKind.SET_LIST_LEN:
+                        v = max(0, min(5, self._as_index(v_raw, 0)))
+                    elif kind == ActionKind.SET_BLOCK_LEN:
+                        v = max(0, min(5, self._as_index(v_raw, 0)))
+                    elif kind == ActionKind.SET_VAR_ID:
+                        v = self._as_index(v_raw, 0)
+                    else:
+                        v = v_raw
                     out_actions[b].append(Action(kind=kind, value=v))
                 else:
                     out_actions[b].append(Action(kind=kind))
 
-                # If parse completed (empty) or at PROGRAM and nothing expected, close with EOS immediately
-                if (len(parser_states[b].stack) == 0 or (len(parser_states[b].stack) == 1 and parser_states[b].stack[0] == ParserRole.PROGRAM)) and not parser_states[b].expecting:
-                    if len(parser_states[b].stack) == 0:
-                        parser_states[b].stack = [ParserRole.PROGRAM]
-                    finished[b] = True
-                    out_actions[b].append(Action(kind=ActionKind.EOS))
+                # Avoid auto-closing; rely on length cap, best-effort completion, and post-processing
 
             if bool(finished.all().item()):
                 break
@@ -337,13 +548,17 @@ class ProgramGenerator(nn.Module):
                         default_val = None
                     out_actions[b].append(Action(kind=need_kind, value=default_val))
                     try:
-                        parser_states[b].apply_action(Action(need_kind, default_val))
+                        new_roles = parser_states[b].apply_action(Action(need_kind, default_val))
+                        for role in reversed(new_roles):
+                            parser_states[b].push(role)
                     except Exception:
-                        pass
+                        # If applying attribute fails, break to avoid infinite loop
+                        break
                     continue
                 # No attribute expected: choose a minimal production to reduce stack
                 if len(parser_states[b].stack) == 0 or (len(parser_states[b].stack) == 1 and parser_states[b].stack[0] == ParserRole.PROGRAM):
-                    break
+                    # Allow another statement rather than breaking immediately
+                    parser_states[b].stack = [ParserRole.STMT]
                 top = parser_states[b].peek()
                 if top in (ParserRole.STMT, ParserRole.IF_BODY, ParserRole.FOR_BODY, ParserRole.WHILE_BODY):
                     k = ActionKind.PROD_RETURN
@@ -389,14 +604,23 @@ class ProgramGenerator(nn.Module):
                         parser_states[b].push(role)
                 except Exception:
                     break
-            # Append EOS when structurally complete
-            out_actions[b].append(Action(kind=ActionKind.EOS))
+            # Do not append EOS here; leave post-processing to finalize
 
-        # Post-process: ensure each sequence starts with PROD_FUNCTION_DEF and ends with a single EOS
+        # Post-process: ensure each sequence starts with PROD_FUNCTION_DEF (with metadata) and ends with a single EOS
         for b in range(B):
             seq = out_actions[b]
             if not seq or seq[0].kind != ActionKind.PROD_FUNCTION_DEF:
                 seq = [Action(kind=ActionKind.PROD_FUNCTION_DEF)] + seq
+                # Insert metadata immediately after if missing
+                has_fn_name = any(a.kind == ActionKind.SET_FUNCTION_NAME for a in seq[:5])
+                has_params = any(a.kind == ActionKind.SET_PARAMS for a in seq[:5])
+                insert_pos = 1
+                if not has_fn_name:
+                    seq.insert(insert_pos, Action(kind=ActionKind.SET_FUNCTION_NAME, value="program"))
+                    insert_pos += 1
+                if not has_params:
+                    params = known_names[b] if known_names[b] else ["n"]
+                    seq.insert(insert_pos, Action(kind=ActionKind.SET_PARAMS, value=params))
             # Truncate after first EOS if any
             eos_pos = None
             for i, a in enumerate(seq):
@@ -423,6 +647,250 @@ class ProgramGenerator(nn.Module):
                 ]
 
         return out_actions
+
+    @torch.inference_mode()
+    def generate_debug(
+        self,
+        memory: torch.Tensor,
+        max_len: int = 64,
+        *,
+        sampling: bool = False,
+        temperature: float = 1.0,
+        top_k: Optional[int] = None,
+        use_heuristics: bool = False,
+    ) -> Tuple[List[List[Action]], List[List[Dict[str, Any]]]]:
+        """Generate with step-by-step trace per sequence.
+
+        Returns: (actions_per_batch, traces_per_batch)
+        Each trace step contains: t, chosen_kind, expecting, stack, valid_next, set_value, finished
+        """
+        device = next(self.parameters()).device
+        if memory.dim() == 2:
+            memory = memory.unsqueeze(1)
+        memory = memory.to(device)
+
+        B = memory.shape[0]
+        bos_id = self.num_actions
+        tokens = torch.full((B, max_len), fill_value=bos_id, dtype=torch.long, device=device)
+        finished = torch.zeros((B,), dtype=torch.bool, device=device)
+
+        out_actions: List[List[Action]] = [[] for _ in range(B)]
+        traces: List[List[Dict[str, Any]]] = [[] for _ in range(B)]
+
+        known_names: List[List[str]] = [["n"] for _ in range(B)]
+        parser_states = [ParserState(strict_decoding=True) for _ in range(B)]
+        assignment_target_pending: List[bool] = [False for _ in range(B)]
+        fresh_name_pool = ["x", "y", "z", "i", "j", "k", "a", "b", "c"]
+
+        for t in range(1, max_len):
+            kind_logits, dec_hidden = self.head.forward_step(memory, tokens[:, :t])
+            step_logits = kind_logits[:, -1, :]
+
+            valid_step = self.compute_valid_action_mask_next(tokens[:, :t])
+            for b in range(B):
+                if not bool(valid_step[b].any().item()):
+                    if t == 1:
+                        def_idx = self.action_to_id.get(ActionKind.PROD_FUNCTION_DEF)
+                        if def_idx is not None:
+                            valid_step[b, def_idx] = True
+                    else:
+                        eos_idx = self.action_to_id.get(ActionKind.EOS)
+                        if eos_idx is not None:
+                            valid_step[b, eos_idx] = True
+            step_logits = step_logits.masked_fill(~valid_step, float("-inf"))
+
+            # Apply same simple heuristic as generate() if enabled
+            if use_heuristics:
+                mod_logits = step_logits.clone()
+                for b in range(B):
+                    if finished[b].item():
+                        continue
+                    state = parser_states[b]
+                    if getattr(state, "expecting", []):
+                        continue
+                    try:
+                        top_role = state.peek()
+                    except Exception:
+                        top_role = ParserRole.PROGRAM
+                    def _boost(kind: ActionKind, delta: float) -> None:
+                        idx = self.action_to_id.get(kind)
+                        if idx is not None:
+                            mod_logits[b, idx] = mod_logits[b, idx] + float(delta)
+                    if top_role in (
+                        ParserRole.EXPR,
+                        ParserRole.IF_COND,
+                        ParserRole.FOR_ITER,
+                        ParserRole.WHILE_COND,
+                        ParserRole.ASSIGN_VALUE,
+                        ParserRole.EXPR_LIST,
+                        ParserRole.ARG_LIST,
+                    ):
+                        _boost(ActionKind.PROD_VARIABLE, 0.6)
+                        _boost(ActionKind.PROD_CONSTANT_INT, -0.25)
+                        _boost(ActionKind.PROD_BINARY_OP, 0.15)
+                    elif top_role in (ParserRole.ASSIGN_TARGET, ParserRole.NAME):
+                        _boost(ActionKind.PROD_VARIABLE, 0.7)
+                        _boost(ActionKind.PROD_CONSTANT_INT, -0.5)
+            else:
+                mod_logits = step_logits
+
+            # Choose action
+            if sampling:
+                logits = mod_logits
+                if top_k is not None and top_k > 0:
+                    k = min(int(top_k), logits.shape[-1])
+                    _, topk_idx = torch.topk(logits, k=k, dim=-1)
+                    keep_mask = torch.zeros_like(logits, dtype=torch.bool)
+                    keep_mask.scatter_(1, topk_idx, True)
+                    logits = logits.masked_fill(~keep_mask, float("-inf"))
+                temp = float(temperature) if float(temperature) > 0 else 1.0
+                probs = torch.softmax(logits / temp, dim=-1)
+                pred = torch.multinomial(probs, num_samples=1).squeeze(-1)
+            else:
+                pred = torch.argmax(mod_logits, dim=-1)
+            tokens[:, t] = pred
+
+            hidden_t = dec_hidden[:, -1, :]
+            for b in range(B):
+                if finished[b].item():
+                    continue
+                kind = self.action_list[int(pred[b].item())]
+                set_value: Optional[Any] = None
+                if kind == ActionKind.EOS:
+                    finished[b] = True
+                    out_actions[b].append(Action(kind=kind))
+                else:
+                    try:
+                        new_roles = parser_states[b].apply_action(Action(kind))
+                        if kind not in (ActionKind.PROD_FUNCTION_DEF, ActionKind.PROD_RETURN):
+                            for role in reversed(new_roles):
+                                parser_states[b].push(role)
+                    except Exception:
+                        finished[b] = True
+                        out_actions[b].append(Action(kind=ActionKind.EOS))
+                        traces[b].append({
+                            "t": t,
+                            "chosen_kind": kind,
+                            "expecting": list(parser_states[b].expecting),
+                            "stack": list(parser_states[b].stack),
+                            "valid_next": [self.action_list[i] for i, ok in enumerate(valid_step[b].tolist()) if ok],
+                            "set_value": None,
+                            "finished": True,
+                        })
+                        continue
+
+                    if kind == ActionKind.PROD_ASSIGNMENT:
+                        assignment_target_pending[b] = True
+
+                    if kind.name.startswith("SET_"):
+                        v_raw = self.head.predict_value_from_hidden(hidden_t[b], kind)
+                        if kind == ActionKind.SET_PARAMS:
+                            try:
+                                params = v_raw if isinstance(v_raw, list) else ["n"]
+                                params = [p if isinstance(p, str) and p.isidentifier() else "n" for p in params]
+                                if not params:
+                                    params = ["n"]
+                            except Exception:
+                                params = ["n"]
+                            v = params
+                            seen = set()
+                            dedup: List[str] = []
+                            for name in params:
+                                if name not in seen:
+                                    seen.add(name)
+                                    dedup.append(name)
+                            known_names[b] = dedup
+                        elif kind == ActionKind.SET_VARIABLE_NAME:
+                            if assignment_target_pending[b]:
+                                chosen = None
+                                for cand in fresh_name_pool:
+                                    if cand not in known_names[b]:
+                                        chosen = cand
+                                        break
+                                if chosen is None:
+                                    chosen = f"v{len(known_names[b])}"
+                                v = chosen
+                                known_names[b].append(chosen)
+                                assignment_target_pending[b] = False
+                            else:
+                                if not known_names[b]:
+                                    known_names[b] = ["n"]
+                                v = known_names[b][0]
+                        if kind == ActionKind.SET_OP:
+                            idx = self._as_index(v_raw, 0)
+                            v = self.op_tokens[idx] if 0 <= idx < len(self.op_tokens) else "+"
+                        elif kind == ActionKind.SET_FUNCTION_NAME:
+                            idx = self._as_index(v_raw, 0)
+                            tok = self.fn_tokens[idx] if 0 <= idx < len(self.fn_tokens) else "program"
+                            v = self._sanitize_identifier(tok, "program")
+                        elif kind == ActionKind.SET_ATTRIBUTE_NAME:
+                            idx = self._as_index(v_raw, 0)
+                            tok = self.attr_tokens[idx] if 0 <= idx < len(self.attr_tokens) else "attr"
+                            v = self._sanitize_identifier(tok, "attr")
+                        elif kind == ActionKind.SET_CONST_INT:
+                            idx = self._as_index(v_raw, 0)
+                            try:
+                                v = int(self.small_int_tokens[idx])
+                            except Exception:
+                                v = 0
+                        elif kind == ActionKind.SET_CONST_BOOL:
+                            v = self._as_bool(v_raw, False)
+                        elif kind == ActionKind.SET_CONST_STR:
+                            v = self._as_str(v_raw, "")
+                        elif kind == ActionKind.SET_ARG_LEN:
+                            v = max(0, min(5, self._as_index(v_raw, 0)))
+                        elif kind == ActionKind.SET_LIST_LEN:
+                            v = max(0, min(5, self._as_index(v_raw, 0)))
+                        elif kind == ActionKind.SET_BLOCK_LEN:
+                            v = max(0, min(5, self._as_index(v_raw, 0)))
+                        elif kind == ActionKind.SET_VAR_ID:
+                            v = self._as_index(v_raw, 0)
+                        else:
+                            v = v_raw
+                        set_value = v
+                        out_actions[b].append(Action(kind=kind, value=v))
+                    else:
+                        out_actions[b].append(Action(kind=kind))
+
+                traces[b].append({
+                    "t": t,
+                    "chosen_kind": kind,
+                    "expecting": list(parser_states[b].expecting),
+                    "stack": list(parser_states[b].stack),
+                    "valid_next": [self.action_list[i] for i, ok in enumerate(valid_step[b].tolist()) if ok],
+                    "set_value": set_value,
+                    "finished": bool(finished[b].item()),
+                })
+
+            if bool(finished.all().item()):
+                break
+
+        # Minimal post-process to guarantee EOS
+        for b in range(B):
+            seq = out_actions[b]
+            if not seq or seq[0].kind != ActionKind.PROD_FUNCTION_DEF:
+                seq = [Action(kind=ActionKind.PROD_FUNCTION_DEF)] + seq
+                has_fn_name = any(a.kind == ActionKind.SET_FUNCTION_NAME for a in seq[:5])
+                has_params = any(a.kind == ActionKind.SET_PARAMS for a in seq[:5])
+                insert_pos = 1
+                if not has_fn_name:
+                    seq.insert(insert_pos, Action(kind=ActionKind.SET_FUNCTION_NAME, value="program"))
+                    insert_pos += 1
+                if not has_params:
+                    params = known_names[b] if known_names[b] else ["n"]
+                    seq.insert(insert_pos, Action(kind=ActionKind.SET_PARAMS, value=params))
+            eos_pos = None
+            for i, a in enumerate(seq):
+                if a.kind == ActionKind.EOS:
+                    eos_pos = i
+                    break
+            if eos_pos is not None:
+                seq = seq[:eos_pos + 1]
+            else:
+                seq.append(Action(kind=ActionKind.EOS))
+            out_actions[b] = seq
+
+        return out_actions, traces
 
 
 __all__ = ["ProgramGenerationHead", "ProgramGenerator"]

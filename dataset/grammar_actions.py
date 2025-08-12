@@ -116,22 +116,20 @@ class ParserState:
 
     def get_valid_actions(self) -> Set[ActionKind]:
         """Return the set of valid actions given current parser state"""
-        valid = set()
+        valid: Set[ActionKind] = set()
 
-        # Handle empty stack case
-        if not self.stack:
-            return valid
-
-        top_role = self.peek()
-
-        # In strict decoding mode, if we are expecting a specific SET_* attribute, only allow that
+        # In strict decoding, if attributes are expected, always allow them
         if self.strict_decoding and self.expecting:
             valid.update(self.expecting)
-            # Also always allow BOS/EOS handling to be decided below; no other actions permitted now
-            # Skip structural expansion until attribute fulfilled
-            # Do not add other structural actions in this branch
-            # Fall through to EOS gating below
-        else:
+
+        # If the stack is empty, we cannot expand structural productions,
+        # but attribute expectations (handled above) and EOS gating (below) still apply.
+        top_role: Optional[ParserRole] = None
+        if self.stack:
+            top_role = self.peek()
+
+        # In strict decoding mode, if we are expecting a specific SET_* attribute, only allow that
+        if not (self.strict_decoding and self.expecting):
             if top_role == ParserRole.PROGRAM:
                 valid.add(ActionKind.PROD_FUNCTION_DEF)
             elif top_role == ParserRole.STMT:
@@ -170,6 +168,21 @@ class ParserState:
                     ActionKind.PROD_SUBSCRIPT
                 ])
             elif top_role == ParserRole.EXPR_LIST:
+                valid.update([
+                    ActionKind.PROD_VARIABLE,
+                    ActionKind.PROD_CONSTANT_INT,
+                    ActionKind.PROD_CONSTANT_BOOL,
+                    ActionKind.PROD_CONSTANT_STR,
+                    ActionKind.PROD_BINARY_OP,
+                    ActionKind.PROD_UNARY_OP,
+                    ActionKind.PROD_COMPARISON,
+                    ActionKind.PROD_BOOLEAN_OP,
+                    ActionKind.PROD_FUNCTION_CALL,
+                    ActionKind.PROD_LIST,
+                    ActionKind.PROD_ATTRIBUTE,
+                    ActionKind.PROD_SUBSCRIPT
+                ])
+            elif top_role == ParserRole.ARG_LIST:
                 valid.update([
                     ActionKind.PROD_VARIABLE,
                     ActionKind.PROD_CONSTANT_INT,
@@ -337,8 +350,17 @@ class ParserState:
             # In strict mode, chain certain expectations
             if self.strict_decoding:
                 if action.kind == ActionKind.SET_FUNCTION_NAME:
-                    # After naming a function call, expect arg length before arguments
-                    self.expecting = [ActionKind.SET_ARG_LEN]
+                    # Only in function call context (ARG_LIST on stack) require arg length
+                    try:
+                        if len(self.stack) > 0 and self.peek() == ParserRole.ARG_LIST:
+                            self.expecting = [ActionKind.SET_ARG_LEN]
+                    except Exception:
+                        pass
+                elif action.kind == ActionKind.SET_VAR_ID:
+                    # After producing a variable id, immediately require a human-readable name
+                    # so downstream reconstruction can use defined identifiers instead of var_{id}
+                    # This also enables us to control scoping in the generator.
+                    self.expecting = [ActionKind.SET_VARIABLE_NAME]
             # Attribute-setting actions don't affect the parser stack
             # They just set metadata for the current context
             return []
@@ -349,71 +371,85 @@ class ParserState:
         new_roles = []
 
         if action.kind == ActionKind.PROD_FUNCTION_DEF:
-            # Replace PROGRAM with STMT, return STMT to push
+            # Replace PROGRAM with STMT, and return STMT to push (tests expect this)
             self.stack[-1] = ParserRole.STMT
             if self.strict_decoding:
                 self.started = True
+                # Prefer to set function metadata (name/params) immediately after def
+                # before emitting any statements
+                self.expecting = [ActionKind.SET_FUNCTION_NAME, ActionKind.SET_PARAMS]
             new_roles = [ParserRole.STMT]
         elif action.kind == ActionKind.PROD_RETURN:
-            # Replace STMT with EXPR, return EXPR to push
+            # Replace STMT with EXPR, and return EXPR to push (tests expect this)
             self.stack[-1] = ParserRole.EXPR
             new_roles = [ParserRole.EXPR]
         elif action.kind == ActionKind.PROD_VARIABLE:
-            # Consume EXPR, NAME, CONST, IF_COND, FOR_ITER, WHILE_COND, ASSIGN_TARGET, or ASSIGN_VALUE
+            # Consume expression-bearing roles, including list/arg slots
             if self.peek() in [ParserRole.EXPR, ParserRole.NAME, ParserRole.CONST,
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
-                              ParserRole.ASSIGN_TARGET, ParserRole.ASSIGN_VALUE]:
+                              ParserRole.ASSIGN_TARGET, ParserRole.FOR_TARGET, ParserRole.ASSIGN_VALUE,
+                              ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
                 self.stack.pop()
             if self.strict_decoding:
                 # Require SET_VAR_ID immediately after a variable production
                 self.expecting = [ActionKind.SET_VAR_ID]
         elif action.kind == ActionKind.PROD_CONSTANT_INT:
-            # Consume EXPR, CONST, IF_COND, FOR_ITER, WHILE_COND, or ASSIGN_VALUE
+            # Consume EXPR-like positions, including list/arg elements
             if self.peek() in [ParserRole.EXPR, ParserRole.CONST,
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
-                              ParserRole.ASSIGN_VALUE]:
+                              ParserRole.ASSIGN_VALUE, ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
                 self.stack.pop()
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_CONST_INT]
         elif action.kind == ActionKind.PROD_CONSTANT_BOOL:
-            # Consume EXPR, CONST, IF_COND, FOR_ITER, WHILE_COND, or ASSIGN_VALUE
+            # Consume EXPR-like positions, including list/arg elements
             if self.peek() in [ParserRole.EXPR, ParserRole.CONST,
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
-                              ParserRole.ASSIGN_VALUE]:
+                              ParserRole.ASSIGN_VALUE, ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
                 self.stack.pop()
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_CONST_BOOL]
         elif action.kind == ActionKind.PROD_CONSTANT_STR:
-            # Consume EXPR, CONST, IF_COND, FOR_ITER, WHILE_COND, or ASSIGN_VALUE
+            # Consume EXPR-like positions, including list/arg elements
             if self.peek() in [ParserRole.EXPR, ParserRole.CONST,
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
-                              ParserRole.ASSIGN_VALUE]:
+                              ParserRole.ASSIGN_VALUE, ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
                 self.stack.pop()
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_CONST_STR]
         elif action.kind == ActionKind.PROD_BINARY_OP:
             # Push two new EXPR roles for left and right operands
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
             if self.strict_decoding:
                 # Force operator to be specified before operands
                 self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_UNARY_OP:
             # Push one new EXPR role for the operand
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR]
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_COMPARISON:
             # Push two new EXPR roles for left and right operands (same as binary op)
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_BOOLEAN_OP:
             # Push two new EXPR roles for left and right operands
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_FUNCTION_CALL:
             # Push ARG_LIST for arguments
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.ARG_LIST]
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_FUNCTION_NAME]
@@ -421,6 +457,8 @@ class ParserState:
             # In strict decoding, request length first if available
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_LIST_LEN]
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR_LIST]
         elif action.kind == ActionKind.PROD_ASSIGNMENT:
             # Push ASSIGN_TARGET and ASSIGN_VALUE
@@ -444,14 +482,20 @@ class ParserState:
             new_roles = [ParserRole.EXPR_LIST]
         elif action.kind == ActionKind.PROD_ATTRIBUTE:
             # Push EXPR for the object
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR]
             if self.strict_decoding:
                 self.expecting = [ActionKind.SET_ATTRIBUTE_NAME]
         elif action.kind == ActionKind.PROD_SUBSCRIPT:
             # Push EXPR for the value and EXPR for the slice
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
         elif action.kind == ActionKind.PROD_EXPRESSION:
             # Push EXPR for the wrapped expression
+            if self.peek() in [ParserRole.EXPR_LIST, ParserRole.ARG_LIST]:
+                self.stack.pop()
             new_roles = [ParserRole.EXPR]
         elif action.kind == ActionKind.EOS:
             if len(self.stack) > 1 or (len(self.stack) == 1 and self.stack[0] != ParserRole.PROGRAM):

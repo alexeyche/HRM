@@ -35,7 +35,14 @@ def test_program_generator_smoke():
 
         ctx = torch.randn(1, d_model)
         with torch.inference_mode():
-            actions_list = gen.generate(ctx, max_len=32)
+            actions_list = gen.generate(
+                ctx,
+                max_len=32,
+                use_heuristics=True,
+                sampling=False,
+                temperature=0.5,
+                top_k=None
+            )
 
         graph = actions_to_graph(actions_list[0])
 
