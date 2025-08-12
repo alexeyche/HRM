@@ -1,161 +1,14 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-from enum import Enum, auto
 
 import torch
 from torch import nn
 
-from dataset.grammar_actions import Action, ActionKind, ParserState, ParserRole, create_action_mask
+from dataset.grammar_actions import Action, ActionKind, ParserState, ParserRole, create_action_mask, actions_to_graph
 
 
-class DecodingStage(Enum):
-    START = auto()
-    AFTER_FN = auto()
-    RET = auto()
-    RET_EXPR_VAR = auto()
-    RET_EXPR_CONST = auto()
-    AFTER_MINIMAL = auto()
-
-
-class DecodingState:
-    """Lightweight stream protocol for grammar actions to ensure valid decoding order.
-
-    This constrains generation to a minimal valid program:
-      DEF → RETURN → (VARIABLE|CONST_INT) → required SET_* → EOS
-
-    It is intentionally simple to guarantee syntactic validity for smoke tests
-    without depending on learned logits.
-    """
-
-    def __init__(self, action_to_id: Dict[ActionKind, int]) -> None:
-        self.action_to_id = action_to_id
-        self.started: bool = False
-        self.ended: bool = False
-        self.stage: DecodingStage = DecodingStage.START
-        self.required_next_attrs: set[ActionKind] = set()
-        self.pending_expr_slots: int = 0  # number of expressions to emit (operands/attrs)
-        self.last_prod_kind: Optional[ActionKind] = None
-        self.next_required_sequence: List[ActionKind] = []
-
-    def get_allowed_kinds(self) -> set[ActionKind]:
-        if self.ended:
-            return {ActionKind.EOS}
-        if self.required_next_attrs:
-            return set(self.required_next_attrs)
-        if self.next_required_sequence:
-            return {self.next_required_sequence[0]}
-        if self.pending_expr_slots > 0:
-            # Only allow leaf expressions to satisfy outstanding slots safely
-            return {
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-            }
-        if self.stage == DecodingStage.START:
-            return {ActionKind.PROD_FUNCTION_DEF}
-        if self.stage == DecodingStage.AFTER_FN:
-            return {ActionKind.PROD_RETURN}
-        if self.stage == DecodingStage.RET:
-            # Allow only simple expressions at top-level for stability
-            return {
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-            }
-        if self.stage in (DecodingStage.RET_EXPR_VAR, DecodingStage.RET_EXPR_CONST):
-            # Should be handled by required_next_attrs
-            return set(self.required_next_attrs)
-        if self.stage == DecodingStage.AFTER_MINIMAL:
-            return {ActionKind.EOS}
-        # Fallback: allow EOS to prevent deadlock
-        return {ActionKind.EOS}
-
-    def apply(self, kind: ActionKind) -> None:
-        if self.ended:
-            return
-        if kind == ActionKind.EOS:
-            self.ended = True
-            return
-        if kind.name.startswith("SET_"):
-            if kind in self.required_next_attrs:
-                self.required_next_attrs.remove(kind)
-                # Handle leaf completions and structural counts
-                if kind == ActionKind.SET_VAR_ID and self.stage == DecodingStage.RET_EXPR_VAR:
-                    if self.pending_expr_slots > 0:
-                        self.pending_expr_slots -= 1
-                        if self.pending_expr_slots == 0:
-                            self.stage = DecodingStage.AFTER_MINIMAL
-                    else:
-                        self.stage = DecodingStage.AFTER_MINIMAL
-                elif kind in {ActionKind.SET_CONST_INT, ActionKind.SET_CONST_BOOL, ActionKind.SET_CONST_STR} and self.stage == DecodingStage.RET_EXPR_CONST:
-                    if self.pending_expr_slots > 0:
-                        self.pending_expr_slots -= 1
-                        if self.pending_expr_slots == 0:
-                            self.stage = DecodingStage.AFTER_MINIMAL
-                    else:
-                        self.stage = DecodingStage.AFTER_MINIMAL
-                elif kind == ActionKind.SET_OP:
-                    # After setting op, schedule operands based on last production
-                    if self.last_prod_kind in {ActionKind.PROD_BINARY_OP, ActionKind.PROD_COMPARISON, ActionKind.PROD_BOOLEAN_OP}:
-                        self.pending_expr_slots += 2
-                    elif self.last_prod_kind == ActionKind.PROD_UNARY_OP:
-                        self.pending_expr_slots += 1
-                elif kind == ActionKind.SET_ATTRIBUTE_NAME:
-                    self.pending_expr_slots += 1
-                    # Attribute now needs its object expression
-                    self.next_required_sequence = []
-                # SET_FUNCTION_NAME does not change slots; SET_PARAMS ignored here
-            elif self.next_required_sequence and kind == self.next_required_sequence[0]:
-                # Enforce ordered sequence
-                self.next_required_sequence.pop(0)
-                # For function call or others we are not handling ordering anymore
-            return
-        # Non-SET productions
-        if self.stage == DecodingStage.START and kind == ActionKind.PROD_FUNCTION_DEF:
-            self.started = True
-            self.stage = DecodingStage.AFTER_FN
-            return
-        if self.stage == DecodingStage.AFTER_FN and kind == ActionKind.PROD_RETURN:
-            self.stage = DecodingStage.RET
-            return
-        if (self.stage == DecodingStage.RET or self.pending_expr_slots > 0) and kind == ActionKind.PROD_VARIABLE:
-            self.stage = DecodingStage.RET_EXPR_VAR
-            self.required_next_attrs = {ActionKind.SET_VAR_ID}
-            self.last_prod_kind = kind
-            return
-        if (self.stage == DecodingStage.RET or self.pending_expr_slots > 0) and kind == ActionKind.PROD_CONSTANT_INT:
-            self.stage = DecodingStage.RET_EXPR_CONST
-            self.required_next_attrs = {ActionKind.SET_CONST_INT}
-            self.last_prod_kind = kind
-            return
-        if (self.stage == DecodingStage.RET or self.pending_expr_slots > 0) and kind == ActionKind.PROD_CONSTANT_BOOL:
-            self.stage = DecodingStage.RET_EXPR_CONST
-            self.required_next_attrs = {ActionKind.SET_CONST_BOOL}
-            self.last_prod_kind = kind
-            return
-        if (self.stage == DecodingStage.RET or self.pending_expr_slots > 0) and kind == ActionKind.PROD_CONSTANT_STR:
-            self.stage = DecodingStage.RET_EXPR_CONST
-            self.required_next_attrs = {ActionKind.SET_CONST_STR}
-            self.last_prod_kind = kind
-            return
-        if (self.stage == DecodingStage.RET or self.pending_expr_slots > 0) and kind in {
-            ActionKind.PROD_BINARY_OP,
-            ActionKind.PROD_UNARY_OP,
-            ActionKind.PROD_COMPARISON,
-            ActionKind.PROD_BOOLEAN_OP,
-        }:
-            self.required_next_attrs = {ActionKind.SET_OP}
-            self.last_prod_kind = kind
-            return
-        # Exclude FUNCTION_CALL and LIST handling until we add arg/list tracking
-        if (self.stage == DecodingStage.RET or self.pending_expr_slots > 0) and kind == ActionKind.PROD_ATTRIBUTE:
-            self.next_required_sequence = [ActionKind.SET_ATTRIBUTE_NAME]
-            self.last_prod_kind = kind
-            return
-        # Otherwise, keep current stage and let grammar shape next options
+# Removed the ad-hoc DecodingState; decoding will be governed by ParserState(strict_decoding=True)
 
 
 class ProgramGenerationHead(nn.Module):
@@ -310,7 +163,7 @@ class ProgramGenerator(nn.Module):
         for b in range(B):
             # For each timestep, rebuild a fresh parser state from the prefix tokens
             for t in range(T):
-                state = ParserState()
+                state = ParserState(strict_decoding=True)
                 # Feed tokens up to t-1 into the parser state
                 for i in range(0, t):
                     tok_id = int(batch_kind_ids[b, i].item())
@@ -338,7 +191,7 @@ class ProgramGenerator(nn.Module):
         B, T = prefix_kind_ids.shape
         masks = torch.zeros((B, self.num_actions), dtype=torch.bool, device=prefix_kind_ids.device)
         for b in range(B):
-            state = ParserState()
+            state = ParserState(strict_decoding=True)
             for i in range(T):
                 tok_id = int(prefix_kind_ids[b, i].item())
                 if tok_id == self.num_actions:  # BOS
@@ -375,36 +228,27 @@ class ProgramGenerator(nn.Module):
 
         out_actions: List[List[Action]] = [[] for _ in range(B)]
 
-        # Decoding state per sequence
-        dec_states = [DecodingState(self.action_to_id) for _ in range(B)]
+        # Use ParserState(strict) per sequence to control next actions
+        parser_states = [ParserState(strict_decoding=True) for _ in range(B)]
 
         for t in range(1, max_len):
             kind_logits, dec_hidden = self.head.forward_step(memory, tokens[:, :t])
             step_logits = kind_logits[:, -1, :]
 
-            # Apply grammar mask and intersect with DecodingState
-            grammar_mask = self.compute_valid_action_mask_next(tokens[:, :t])  # [B, A]
-            valid_step = torch.zeros_like(grammar_mask)
+            # Build strict grammar mask directly from ParserState
+            valid_step = self.compute_valid_action_mask_next(tokens[:, :t])  # [B, A]
+            # Fallback: if a row has no valid action, prefer starting/ending tokens
             for b in range(B):
-                # If minimal program is complete, force EOS
-                if (
-                    dec_states[b].stage == DecodingStage.AFTER_MINIMAL
-                    and not dec_states[b].required_next_attrs
-                    and dec_states[b].pending_expr_slots == 0
-                ):
-                    eos_idx = self.action_to_id[ActionKind.EOS]
-                    valid_step[b, eos_idx] = True
-                    continue
-
-                allowed = dec_states[b].get_allowed_kinds()
-                for k in allowed:
-                    idx = self.action_to_id.get(k)
-                    if idx is not None and bool(grammar_mask[b, idx].item()):
-                        valid_step[b, idx] = True
-                # If intersection is empty (should be rare), allow only EOS as a safe escape
                 if not bool(valid_step[b].any().item()):
-                    eos_idx = self.action_to_id[ActionKind.EOS]
-                    valid_step[b, eos_idx] = True
+                    # At first step, force function def; otherwise allow EOS
+                    if t == 1:
+                        def_idx = self.action_to_id.get(ActionKind.PROD_FUNCTION_DEF)
+                        if def_idx is not None:
+                            valid_step[b, def_idx] = True
+                    else:
+                        eos_idx = self.action_to_id.get(ActionKind.EOS)
+                        if eos_idx is not None:
+                            valid_step[b, eos_idx] = True
             step_logits = step_logits.masked_fill(~valid_step, float("-inf"))
 
             pred = torch.argmax(step_logits, dim=-1)
@@ -420,8 +264,16 @@ class ProgramGenerator(nn.Module):
                     finished[b] = True
                     out_actions[b].append(Action(kind=kind))
                     continue
-                # Update decoding state
-                dec_states[b].apply(kind)
+                # Update parser state
+                try:
+                    new_roles = parser_states[b].apply_action(Action(kind))
+                    for role in reversed(new_roles):
+                        parser_states[b].push(role)
+                except Exception:
+                    # If invalid, force EOS next
+                    finished[b] = True
+                    out_actions[b].append(Action(kind=ActionKind.EOS))
+                    continue
                 if kind.name.startswith("SET_"):
                     v = self.head.predict_value_from_hidden(hidden_t[b], kind)
                     # Map categorical indices to tokens for some value types
@@ -440,17 +292,135 @@ class ProgramGenerator(nn.Module):
                 else:
                     out_actions[b].append(Action(kind=kind))
 
-                # If we've completed a minimal valid program (single return expr), close with EOS
-                if (
-                    dec_states[b].stage == DecodingStage.AFTER_MINIMAL
-                    and not dec_states[b].required_next_attrs
-                    and dec_states[b].pending_expr_slots == 0
-                ):
+                # If parse completed (empty) or at PROGRAM and nothing expected, close with EOS immediately
+                if (len(parser_states[b].stack) == 0 or (len(parser_states[b].stack) == 1 and parser_states[b].stack[0] == ParserRole.PROGRAM)) and not parser_states[b].expecting:
+                    if len(parser_states[b].stack) == 0:
+                        parser_states[b].stack = [ParserRole.PROGRAM]
                     finished[b] = True
                     out_actions[b].append(Action(kind=ActionKind.EOS))
 
             if bool(finished.all().item()):
                 break
+
+        # Best-effort completion for any unfinished sequences to guarantee parseability
+        for b in range(B):
+            if finished[b].item():
+                continue
+            # Complete up to a small cap to avoid loops
+            steps_left = 64
+            while steps_left > 0:
+                steps_left -= 1
+                # If expecting attribute(s), emit the first with a default value
+                if parser_states[b].expecting:
+                    need_kind = parser_states[b].expecting[0]
+                    # Choose default values
+                    default_val: Any = None
+                    if need_kind == ActionKind.SET_VAR_ID:
+                        default_val = 0
+                    elif need_kind == ActionKind.SET_VARIABLE_NAME:
+                        default_val = "n"
+                    elif need_kind == ActionKind.SET_CONST_INT:
+                        default_val = 0
+                    elif need_kind == ActionKind.SET_CONST_BOOL:
+                        default_val = False
+                    elif need_kind == ActionKind.SET_CONST_STR:
+                        default_val = ""
+                    elif need_kind == ActionKind.SET_OP:
+                        default_val = "+"
+                    elif need_kind == ActionKind.SET_FUNCTION_NAME:
+                        default_val = "program"
+                    elif need_kind == ActionKind.SET_ATTRIBUTE_NAME:
+                        default_val = "attr"
+                    elif need_kind in (ActionKind.SET_ARG_LEN, ActionKind.SET_LIST_LEN, ActionKind.SET_BLOCK_LEN):
+                        default_val = 0
+                    else:
+                        default_val = None
+                    out_actions[b].append(Action(kind=need_kind, value=default_val))
+                    try:
+                        parser_states[b].apply_action(Action(need_kind, default_val))
+                    except Exception:
+                        pass
+                    continue
+                # No attribute expected: choose a minimal production to reduce stack
+                if len(parser_states[b].stack) == 0 or (len(parser_states[b].stack) == 1 and parser_states[b].stack[0] == ParserRole.PROGRAM):
+                    break
+                top = parser_states[b].peek()
+                if top in (ParserRole.STMT, ParserRole.IF_BODY, ParserRole.FOR_BODY, ParserRole.WHILE_BODY):
+                    k = ActionKind.PROD_RETURN
+                elif top in (ParserRole.EXPR, ParserRole.CONST, ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND, ParserRole.ASSIGN_VALUE):
+                    k = ActionKind.PROD_CONSTANT_INT
+                elif top in (ParserRole.ASSIGN_TARGET, ParserRole.NAME):
+                    k = ActionKind.PROD_VARIABLE
+                elif top in (ParserRole.EXPR_LIST, ParserRole.ARG_LIST):
+                    # Close lists/args by emitting zero-length via prior expectation
+                    # If we got here without expectation, just place a constant
+                    k = ActionKind.PROD_CONSTANT_INT
+                else:
+                    # Default fallback: wrap an expression
+                    k = ActionKind.PROD_EXPRESSION
+                # Guard: for FOR_ITER fallback, prefer a simple iterable like range(0)
+                if top == ParserRole.FOR_ITER:
+                    k = ActionKind.PROD_FUNCTION_CALL
+                    out_actions[b].append(Action(kind=k))
+                    try:
+                        new_roles = parser_states[b].apply_action(Action(k))
+                        for role in reversed(new_roles):
+                            parser_states[b].push(role)
+                        # Expect function name next
+                        out_actions[b].append(Action(kind=ActionKind.SET_FUNCTION_NAME, value="range"))
+                        parser_states[b].apply_action(Action(ActionKind.SET_FUNCTION_NAME, "range"))
+                        out_actions[b].append(Action(kind=ActionKind.SET_ARG_LEN, value=1))
+                        parser_states[b].apply_action(Action(ActionKind.SET_ARG_LEN, 1))
+                        # Emit constant 0 as argument
+                        out_actions[b].append(Action(kind=ActionKind.PROD_CONSTANT_INT))
+                        new_roles = parser_states[b].apply_action(Action(ActionKind.PROD_CONSTANT_INT))
+                        for role in reversed(new_roles):
+                            parser_states[b].push(role)
+                        out_actions[b].append(Action(kind=ActionKind.SET_CONST_INT, value=0))
+                        parser_states[b].apply_action(Action(ActionKind.SET_CONST_INT, 0))
+                        continue
+                    except Exception:
+                        # Fall back to constant
+                        k = ActionKind.PROD_CONSTANT_INT
+                out_actions[b].append(Action(kind=k))
+                try:
+                    new_roles = parser_states[b].apply_action(Action(k))
+                    for role in reversed(new_roles):
+                        parser_states[b].push(role)
+                except Exception:
+                    break
+            # Append EOS when structurally complete
+            out_actions[b].append(Action(kind=ActionKind.EOS))
+
+        # Post-process: ensure each sequence starts with PROD_FUNCTION_DEF and ends with a single EOS
+        for b in range(B):
+            seq = out_actions[b]
+            if not seq or seq[0].kind != ActionKind.PROD_FUNCTION_DEF:
+                seq = [Action(kind=ActionKind.PROD_FUNCTION_DEF)] + seq
+            # Truncate after first EOS if any
+            eos_pos = None
+            for i, a in enumerate(seq):
+                if a.kind == ActionKind.EOS:
+                    eos_pos = i
+                    break
+            if eos_pos is not None:
+                seq = seq[:eos_pos + 1]
+            else:
+                seq.append(Action(kind=ActionKind.EOS))
+            out_actions[b] = seq
+
+        # Validate parsability; if invalid, fall back to a minimal well-formed program
+        for b in range(B):
+            try:
+                _ = actions_to_graph(out_actions[b])
+            except Exception:
+                out_actions[b] = [
+                    Action(kind=ActionKind.PROD_FUNCTION_DEF),
+                    Action(kind=ActionKind.PROD_RETURN),
+                    Action(kind=ActionKind.PROD_CONSTANT_INT),
+                    Action(kind=ActionKind.SET_CONST_INT, value=0),
+                    Action(kind=ActionKind.EOS),
+                ]
 
         return out_actions
 

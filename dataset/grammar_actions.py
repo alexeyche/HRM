@@ -84,10 +84,19 @@ class ParserState:
     """Tracks parser stack and determines valid actions"""
     stack: List[ParserRole]
     pending_attrs: Dict[str, Any]  # For storing attributes before node creation
+    # Decoding-time controls
+    strict_decoding: bool
+    # In strict mode, require these immediate attribute-setting actions before anything else
+    expecting: List[ActionKind]
+    # Track whether a function definition has begun during decoding
+    started: bool
 
-    def __init__(self):
+    def __init__(self, strict_decoding: bool = False):
         self.stack = [ParserRole.PROGRAM]
         self.pending_attrs = {}
+        self.strict_decoding = strict_decoding
+        self.expecting = []
+        self.started = False
 
     def push(self, role: ParserRole):
         """Push a role onto the parser stack"""
@@ -115,193 +124,188 @@ class ParserState:
 
         top_role = self.peek()
 
-        if top_role == ParserRole.PROGRAM:
-            valid.add(ActionKind.PROD_FUNCTION_DEF)
-        elif top_role == ParserRole.STMT:
-            valid.update([
-                ActionKind.PROD_RETURN,
-                ActionKind.PROD_ASSIGNMENT,
-                ActionKind.PROD_AUGMENTED_ASSIGNMENT,
-                ActionKind.PROD_IF,
-                ActionKind.PROD_FOR,
-                ActionKind.PROD_WHILE,
-                ActionKind.PROD_EXPRESSION
-            ])
-        elif top_role == ParserRole.STMT_LIST:
-            valid.update([
-                ActionKind.PROD_RETURN,
-                ActionKind.PROD_ASSIGNMENT,
-                ActionKind.PROD_AUGMENTED_ASSIGNMENT,
-                ActionKind.PROD_IF,
-                ActionKind.PROD_FOR,
-                ActionKind.PROD_WHILE,
-                ActionKind.PROD_EXPRESSION
-            ])
-        elif top_role == ParserRole.EXPR:
-            valid.update([
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-                ActionKind.PROD_BINARY_OP,
-                ActionKind.PROD_UNARY_OP,
-                ActionKind.PROD_COMPARISON,
-                ActionKind.PROD_BOOLEAN_OP,
-                ActionKind.PROD_FUNCTION_CALL,
-                ActionKind.PROD_LIST,
-                ActionKind.PROD_ATTRIBUTE,
-                ActionKind.PROD_SUBSCRIPT
-            ])
-        elif top_role == ParserRole.EXPR_LIST:
-            valid.update([
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-                ActionKind.PROD_BINARY_OP,
-                ActionKind.PROD_UNARY_OP,
-                ActionKind.PROD_COMPARISON,
-                ActionKind.PROD_BOOLEAN_OP,
-                ActionKind.PROD_FUNCTION_CALL,
-                ActionKind.PROD_LIST,
-                ActionKind.PROD_ATTRIBUTE,
-                ActionKind.PROD_SUBSCRIPT
-            ])
-        elif top_role == ParserRole.NAME:
-            valid.add(ActionKind.PROD_VARIABLE)
-        elif top_role == ParserRole.CONST:
-            valid.update([
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR
-            ])
-        elif top_role == ParserRole.IF_COND:
-            valid.update([
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-                ActionKind.PROD_BINARY_OP,
-                ActionKind.PROD_UNARY_OP,
-                ActionKind.PROD_COMPARISON,
-                ActionKind.PROD_BOOLEAN_OP,
-                ActionKind.PROD_FUNCTION_CALL,
-                ActionKind.PROD_LIST,
-                ActionKind.PROD_ATTRIBUTE,
-                ActionKind.PROD_SUBSCRIPT
-            ])
-        elif top_role == ParserRole.IF_BODY:
-            valid.update([
-                ActionKind.PROD_RETURN,
-                ActionKind.PROD_ASSIGNMENT,
-                ActionKind.PROD_AUGMENTED_ASSIGNMENT,
-                ActionKind.PROD_IF,
-                ActionKind.PROD_FOR,
-                ActionKind.PROD_WHILE,
-                ActionKind.PROD_EXPRESSION
-            ])
-        elif top_role == ParserRole.FOR_ITER:
-            valid.update([
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-                ActionKind.PROD_BINARY_OP,
-                ActionKind.PROD_UNARY_OP,
-                ActionKind.PROD_COMPARISON,
-                ActionKind.PROD_BOOLEAN_OP,
-                ActionKind.PROD_FUNCTION_CALL,
-                ActionKind.PROD_LIST,
-                ActionKind.PROD_ATTRIBUTE,
-                ActionKind.PROD_SUBSCRIPT
-            ])
-        elif top_role == ParserRole.FOR_TARGET:
-            valid.update([
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-                ActionKind.PROD_BINARY_OP,
-                ActionKind.PROD_UNARY_OP,
-                ActionKind.PROD_COMPARISON,
-                ActionKind.PROD_BOOLEAN_OP,
-                ActionKind.PROD_FUNCTION_CALL,
-                ActionKind.PROD_LIST,
-                ActionKind.PROD_ATTRIBUTE,
-                ActionKind.PROD_SUBSCRIPT
-            ])
-        elif top_role == ParserRole.FOR_BODY:
-            valid.update([
-                ActionKind.PROD_RETURN,
-                ActionKind.PROD_ASSIGNMENT,
-                ActionKind.PROD_AUGMENTED_ASSIGNMENT,
-                ActionKind.PROD_IF,
-                ActionKind.PROD_FOR,
-                ActionKind.PROD_WHILE,
-                ActionKind.PROD_EXPRESSION
-            ])
-        elif top_role == ParserRole.WHILE_COND:
-            valid.update([
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-                ActionKind.PROD_BINARY_OP,
-                ActionKind.PROD_UNARY_OP,
-                ActionKind.PROD_COMPARISON,
-                ActionKind.PROD_BOOLEAN_OP,
-                ActionKind.PROD_FUNCTION_CALL,
-                ActionKind.PROD_LIST,
-                ActionKind.PROD_ATTRIBUTE,
-                ActionKind.PROD_SUBSCRIPT
-            ])
-        elif top_role == ParserRole.WHILE_BODY:
-            valid.update([
-                ActionKind.PROD_RETURN,
-                ActionKind.PROD_ASSIGNMENT,
-                ActionKind.PROD_AUGMENTED_ASSIGNMENT,
-                ActionKind.PROD_IF,
-                ActionKind.PROD_FOR,
-                ActionKind.PROD_WHILE,
-                ActionKind.PROD_EXPRESSION
-            ])
-        elif top_role == ParserRole.ASSIGN_TARGET:
-            valid.add(ActionKind.PROD_VARIABLE)
-        elif top_role == ParserRole.ASSIGN_VALUE:
-            valid.update([
-                ActionKind.PROD_VARIABLE,
-                ActionKind.PROD_CONSTANT_INT,
-                ActionKind.PROD_CONSTANT_BOOL,
-                ActionKind.PROD_CONSTANT_STR,
-                ActionKind.PROD_BINARY_OP,
-                ActionKind.PROD_UNARY_OP,
-                ActionKind.PROD_COMPARISON,
-                ActionKind.PROD_BOOLEAN_OP,
-                ActionKind.PROD_FUNCTION_CALL,
-                ActionKind.PROD_LIST,
-                ActionKind.PROD_ATTRIBUTE,
-                ActionKind.PROD_SUBSCRIPT
-            ])
+        # In strict decoding mode, if we are expecting a specific SET_* attribute, only allow that
+        if self.strict_decoding and self.expecting:
+            valid.update(self.expecting)
+            # Also always allow BOS/EOS handling to be decided below; no other actions permitted now
+            # Skip structural expansion until attribute fulfilled
+            # Do not add other structural actions in this branch
+            # Fall through to EOS gating below
+        else:
+            if top_role == ParserRole.PROGRAM:
+                valid.add(ActionKind.PROD_FUNCTION_DEF)
+            elif top_role == ParserRole.STMT:
+                valid.update([
+                    ActionKind.PROD_RETURN,
+                    ActionKind.PROD_ASSIGNMENT,
+                    ActionKind.PROD_AUGMENTED_ASSIGNMENT,
+                    ActionKind.PROD_IF,
+                    ActionKind.PROD_FOR,
+                    ActionKind.PROD_WHILE,
+                    ActionKind.PROD_EXPRESSION
+                ])
+            elif top_role == ParserRole.STMT_LIST:
+                valid.update([
+                    ActionKind.PROD_RETURN,
+                    ActionKind.PROD_ASSIGNMENT,
+                    ActionKind.PROD_AUGMENTED_ASSIGNMENT,
+                    ActionKind.PROD_IF,
+                    ActionKind.PROD_FOR,
+                    ActionKind.PROD_WHILE,
+                    ActionKind.PROD_EXPRESSION
+                ])
+            elif top_role == ParserRole.EXPR:
+                valid.update([
+                    ActionKind.PROD_VARIABLE,
+                    ActionKind.PROD_CONSTANT_INT,
+                    ActionKind.PROD_CONSTANT_BOOL,
+                    ActionKind.PROD_CONSTANT_STR,
+                    ActionKind.PROD_BINARY_OP,
+                    ActionKind.PROD_UNARY_OP,
+                    ActionKind.PROD_COMPARISON,
+                    ActionKind.PROD_BOOLEAN_OP,
+                    ActionKind.PROD_FUNCTION_CALL,
+                    ActionKind.PROD_LIST,
+                    ActionKind.PROD_ATTRIBUTE,
+                    ActionKind.PROD_SUBSCRIPT
+                ])
+            elif top_role == ParserRole.EXPR_LIST:
+                valid.update([
+                    ActionKind.PROD_VARIABLE,
+                    ActionKind.PROD_CONSTANT_INT,
+                    ActionKind.PROD_CONSTANT_BOOL,
+                    ActionKind.PROD_CONSTANT_STR,
+                    ActionKind.PROD_BINARY_OP,
+                    ActionKind.PROD_UNARY_OP,
+                    ActionKind.PROD_COMPARISON,
+                    ActionKind.PROD_BOOLEAN_OP,
+                    ActionKind.PROD_FUNCTION_CALL,
+                    ActionKind.PROD_LIST,
+                    ActionKind.PROD_ATTRIBUTE,
+                    ActionKind.PROD_SUBSCRIPT
+                ])
+            elif top_role == ParserRole.NAME:
+                valid.add(ActionKind.PROD_VARIABLE)
+            elif top_role == ParserRole.CONST:
+                valid.update([
+                    ActionKind.PROD_CONSTANT_INT,
+                    ActionKind.PROD_CONSTANT_BOOL,
+                    ActionKind.PROD_CONSTANT_STR
+                ])
+            elif top_role == ParserRole.IF_COND:
+                valid.update([
+                    ActionKind.PROD_VARIABLE,
+                    ActionKind.PROD_CONSTANT_INT,
+                    ActionKind.PROD_CONSTANT_BOOL,
+                    ActionKind.PROD_CONSTANT_STR,
+                    ActionKind.PROD_BINARY_OP,
+                    ActionKind.PROD_UNARY_OP,
+                    ActionKind.PROD_COMPARISON,
+                    ActionKind.PROD_BOOLEAN_OP,
+                    ActionKind.PROD_FUNCTION_CALL,
+                    ActionKind.PROD_LIST,
+                    ActionKind.PROD_ATTRIBUTE,
+                    ActionKind.PROD_SUBSCRIPT
+                ])
+            elif top_role == ParserRole.IF_BODY:
+                valid.update([
+                    ActionKind.PROD_RETURN,
+                    ActionKind.PROD_ASSIGNMENT,
+                    ActionKind.PROD_AUGMENTED_ASSIGNMENT,
+                    ActionKind.PROD_IF,
+                    ActionKind.PROD_FOR,
+                    ActionKind.PROD_WHILE,
+                    ActionKind.PROD_EXPRESSION
+                ])
+            elif top_role == ParserRole.FOR_ITER:
+                # For-loop iterator must be iterable. Constrain to function calls (e.g., range), lists, or variables.
+                valid.update([
+                    ActionKind.PROD_FUNCTION_CALL,
+                    ActionKind.PROD_LIST,
+                    ActionKind.PROD_VARIABLE,
+                ])
+            elif top_role == ParserRole.FOR_TARGET:
+                # For-loop target must be an assignable target; we constrain to variable for decoding simplicity
+                valid.update([ActionKind.PROD_VARIABLE])
+            elif top_role == ParserRole.FOR_BODY:
+                valid.update([
+                    ActionKind.PROD_RETURN,
+                    ActionKind.PROD_ASSIGNMENT,
+                    ActionKind.PROD_AUGMENTED_ASSIGNMENT,
+                    ActionKind.PROD_IF,
+                    ActionKind.PROD_FOR,
+                    ActionKind.PROD_WHILE,
+                    ActionKind.PROD_EXPRESSION
+                ])
+            elif top_role == ParserRole.WHILE_COND:
+                valid.update([
+                    ActionKind.PROD_VARIABLE,
+                    ActionKind.PROD_CONSTANT_INT,
+                    ActionKind.PROD_CONSTANT_BOOL,
+                    ActionKind.PROD_CONSTANT_STR,
+                    ActionKind.PROD_BINARY_OP,
+                    ActionKind.PROD_UNARY_OP,
+                    ActionKind.PROD_COMPARISON,
+                    ActionKind.PROD_BOOLEAN_OP,
+                    ActionKind.PROD_FUNCTION_CALL,
+                    ActionKind.PROD_LIST,
+                    ActionKind.PROD_ATTRIBUTE,
+                    ActionKind.PROD_SUBSCRIPT
+                ])
+            elif top_role == ParserRole.WHILE_BODY:
+                valid.update([
+                    ActionKind.PROD_RETURN,
+                    ActionKind.PROD_ASSIGNMENT,
+                    ActionKind.PROD_AUGMENTED_ASSIGNMENT,
+                    ActionKind.PROD_IF,
+                    ActionKind.PROD_FOR,
+                    ActionKind.PROD_WHILE,
+                    ActionKind.PROD_EXPRESSION
+                ])
+            elif top_role == ParserRole.ASSIGN_TARGET:
+                valid.add(ActionKind.PROD_VARIABLE)
+            elif top_role == ParserRole.ASSIGN_VALUE:
+                # Disallow bare comparison/boolean ops as rvalues; keep expressions and literals/calls/lists
+                valid.update([
+                    ActionKind.PROD_VARIABLE,
+                    ActionKind.PROD_CONSTANT_INT,
+                    ActionKind.PROD_CONSTANT_BOOL,
+                    ActionKind.PROD_CONSTANT_STR,
+                    ActionKind.PROD_BINARY_OP,
+                    ActionKind.PROD_UNARY_OP,
+                    ActionKind.PROD_FUNCTION_CALL,
+                    ActionKind.PROD_LIST,
+                    ActionKind.PROD_ATTRIBUTE,
+                    ActionKind.PROD_SUBSCRIPT,
+                ])
 
-        # Always allow EOS - validation will happen in apply_action
-        valid.add(ActionKind.EOS)
+        # EOS gating
+        if self.strict_decoding:
+            # Allow EOS only when stack is at PROGRAM (i.e., function completed) and no pending attribute expected
+            if self.started and (len(self.stack) == 1 and self.stack[0] == ParserRole.PROGRAM) and not self.expecting:
+                valid.add(ActionKind.EOS)
+        else:
+            # Always allow EOS - validation will happen in apply_action
+            valid.add(ActionKind.EOS)
 
-        # Always allow attribute-setting actions (they don't depend on parser state)
-        valid.update([
-            ActionKind.SET_VAR_ID,
-            ActionKind.SET_VARIABLE_NAME,
-            ActionKind.SET_CONST_INT,
-            ActionKind.SET_CONST_BOOL,
-            ActionKind.SET_CONST_STR,
-            ActionKind.SET_OP,
-            ActionKind.SET_FUNCTION_NAME,
-            ActionKind.SET_ATTRIBUTE_NAME,
-            ActionKind.SET_PARAMS,
-            ActionKind.SET_ELSE_BODY,
-            ActionKind.SET_ARG_LEN,
-            ActionKind.SET_LIST_LEN,
-            ActionKind.SET_BLOCK_LEN,
-        ])
+        # Attribute-setting availability
+        if not self.strict_decoding:
+            # In validation/non-strict mode, expose all setters
+            valid.update([
+                ActionKind.SET_VAR_ID,
+                ActionKind.SET_VARIABLE_NAME,
+                ActionKind.SET_CONST_INT,
+                ActionKind.SET_CONST_BOOL,
+                ActionKind.SET_CONST_STR,
+                ActionKind.SET_OP,
+                ActionKind.SET_FUNCTION_NAME,
+                ActionKind.SET_ATTRIBUTE_NAME,
+                ActionKind.SET_PARAMS,
+                ActionKind.SET_ELSE_BODY,
+                ActionKind.SET_ARG_LEN,
+                ActionKind.SET_LIST_LEN,
+                ActionKind.SET_BLOCK_LEN,
+            ])
 
         return valid
 
@@ -323,6 +327,18 @@ class ParserState:
             ActionKind.SET_LIST_LEN,
             ActionKind.SET_BLOCK_LEN,
         ]:
+            if self.strict_decoding and self.expecting:
+                # Consume expectation when matching
+                if action.kind in self.expecting:
+                    try:
+                        self.expecting.remove(action.kind)
+                    except ValueError:
+                        pass
+            # In strict mode, chain certain expectations
+            if self.strict_decoding:
+                if action.kind == ActionKind.SET_FUNCTION_NAME:
+                    # After naming a function call, expect arg length before arguments
+                    self.expecting = [ActionKind.SET_ARG_LEN]
             # Attribute-setting actions don't affect the parser stack
             # They just set metadata for the current context
             return []
@@ -335,6 +351,8 @@ class ParserState:
         if action.kind == ActionKind.PROD_FUNCTION_DEF:
             # Replace PROGRAM with STMT, return STMT to push
             self.stack[-1] = ParserRole.STMT
+            if self.strict_decoding:
+                self.started = True
             new_roles = [ParserRole.STMT]
         elif action.kind == ActionKind.PROD_RETURN:
             # Replace STMT with EXPR, return EXPR to push
@@ -346,45 +364,72 @@ class ParserState:
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
                               ParserRole.ASSIGN_TARGET, ParserRole.ASSIGN_VALUE]:
                 self.stack.pop()
+            if self.strict_decoding:
+                # Require SET_VAR_ID immediately after a variable production
+                self.expecting = [ActionKind.SET_VAR_ID]
         elif action.kind == ActionKind.PROD_CONSTANT_INT:
             # Consume EXPR, CONST, IF_COND, FOR_ITER, WHILE_COND, or ASSIGN_VALUE
             if self.peek() in [ParserRole.EXPR, ParserRole.CONST,
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
                               ParserRole.ASSIGN_VALUE]:
                 self.stack.pop()
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_CONST_INT]
         elif action.kind == ActionKind.PROD_CONSTANT_BOOL:
             # Consume EXPR, CONST, IF_COND, FOR_ITER, WHILE_COND, or ASSIGN_VALUE
             if self.peek() in [ParserRole.EXPR, ParserRole.CONST,
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
                               ParserRole.ASSIGN_VALUE]:
                 self.stack.pop()
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_CONST_BOOL]
         elif action.kind == ActionKind.PROD_CONSTANT_STR:
             # Consume EXPR, CONST, IF_COND, FOR_ITER, WHILE_COND, or ASSIGN_VALUE
             if self.peek() in [ParserRole.EXPR, ParserRole.CONST,
                               ParserRole.IF_COND, ParserRole.FOR_ITER, ParserRole.WHILE_COND,
                               ParserRole.ASSIGN_VALUE]:
                 self.stack.pop()
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_CONST_STR]
         elif action.kind == ActionKind.PROD_BINARY_OP:
             # Push two new EXPR roles for left and right operands
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
+            if self.strict_decoding:
+                # Force operator to be specified before operands
+                self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_UNARY_OP:
             # Push one new EXPR role for the operand
             new_roles = [ParserRole.EXPR]
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_COMPARISON:
             # Push two new EXPR roles for left and right operands (same as binary op)
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_BOOLEAN_OP:
             # Push two new EXPR roles for left and right operands
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_FUNCTION_CALL:
             # Push ARG_LIST for arguments
             new_roles = [ParserRole.ARG_LIST]
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_FUNCTION_NAME]
+        elif action.kind == ActionKind.PROD_LIST:
+            # In strict decoding, request length first if available
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_LIST_LEN]
+            new_roles = [ParserRole.EXPR_LIST]
         elif action.kind == ActionKind.PROD_ASSIGNMENT:
             # Push ASSIGN_TARGET and ASSIGN_VALUE
             new_roles = [ParserRole.ASSIGN_TARGET, ParserRole.ASSIGN_VALUE]
         elif action.kind == ActionKind.PROD_AUGMENTED_ASSIGNMENT:
             # Push ASSIGN_TARGET and ASSIGN_VALUE
             new_roles = [ParserRole.ASSIGN_TARGET, ParserRole.ASSIGN_VALUE]
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_OP]
         elif action.kind == ActionKind.PROD_IF:
             # Push IF_COND, IF_BODY, and optionally another IF_BODY for else
             new_roles = [ParserRole.IF_COND, ParserRole.IF_BODY]
@@ -400,6 +445,8 @@ class ParserState:
         elif action.kind == ActionKind.PROD_ATTRIBUTE:
             # Push EXPR for the object
             new_roles = [ParserRole.EXPR]
+            if self.strict_decoding:
+                self.expecting = [ActionKind.SET_ATTRIBUTE_NAME]
         elif action.kind == ActionKind.PROD_SUBSCRIPT:
             # Push EXPR for the value and EXPR for the slice
             new_roles = [ParserRole.EXPR, ParserRole.EXPR]
@@ -1194,6 +1241,13 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
             return expr
 
         else:
+            # Be permissive: if a statement directly starts with an expression starter,
+            # implicitly wrap it as an EXPRESSION statement.
+            if a.kind in EXPR_STARTERS:
+                expr = add_node(ASTNodeType.EXPRESSION)
+                e = parse_expr()
+                link(expr, e)
+                return expr
             raise ValueError(f"Unexpected action for STMT at pos {cursor}: {a.kind}")
 
     def parse_expr() -> int:
@@ -1383,6 +1437,11 @@ def actions_to_graph(actions: List[Action]) -> Dict[str, Any]:
             return expr_node
 
         else:
+            # If EOS or non-starter appears inside an expression due to noisy generation,
+            # insert a minimal constant to keep the tree well-formed and do not advance cursor.
+            if a.kind == ActionKind.EOS:
+                const = add_node(ASTNodeType.CONSTANT, value=0, dtype="int")
+                return const
             raise ValueError(f"Unexpected action for EXPR at pos {cursor}: {a.kind}")
 
     # Parse the function body: allow multiple statements until EOS

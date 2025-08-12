@@ -8,14 +8,14 @@ from dataset.grammar_actions import ActionKind
 from models.autoencoder import ProgramAutoencoder
 from models.generation import ProgramGenerator
 from dataset.grammar_actions import actions_to_graph
-
+import ast
 import logging
 
 log = logging.getLogger(__name__)
 
 def test_program_generator_smoke():
     d_model = 64
-    for _ in range(10):
+    for _ in range(25):
 
 
         # Instantiate self-contained ProgramGenerator
@@ -44,6 +44,12 @@ def test_program_generator_smoke():
 
         # Debug: log.info the final code
         log.info(f"Final code:\n{final_code}")
+        # Validate that the final code is valid Python
+        try:
+            ast.parse(final_code)
+        except Exception as e:
+            log.error(f"Invalid Python code generated: {e}")
+            assert False, f"Invalid Python code generated: {e}"
 
         assert isinstance(actions_list, list) and len(actions_list) == 1
         actions = actions_list[0]
