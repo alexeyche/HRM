@@ -35,6 +35,10 @@ class ASTNodeType(Enum):
 
     # Data Structures
     LIST = "list"                   # List literal
+    TUPLE = "tuple"                 # Tuple literal / pattern
+
+    # Call keywords
+    KEYWORD_ARG = "keyword_arg"     # keyword argument in a call (name=expr)
 
     # Literals
     CONSTANT = "constant"           # Literal values (numbers, strings, etc.)
@@ -253,7 +257,7 @@ class ASTSimplifier:
         }
 
         # Operator mappings
-        binop_map: Dict[Any, str] = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.Mod: "%", ast.Pow: "**"}
+        binop_map: Dict[Any, str] = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.FloorDiv: "//", ast.Mod: "%", ast.Pow: "**"}
         unaryop_map: Dict[Any, str] = {ast.USub: "-", ast.UAdd: "+", ast.Not: "not"}
         cmpop_map: Dict[Any, str] = {
             ast.Eq: "==",
@@ -262,6 +266,8 @@ class ASTSimplifier:
             ast.LtE: "<=",
             ast.Gt: ">",
             ast.GtE: ">=",
+            ast.In: "in",
+            ast.NotIn: "not in",
         }
         boolop_map: Dict[Any, str] = {ast.And: "and", ast.Or: "or"}
 
@@ -283,6 +289,7 @@ class ASTSimplifier:
                     ASTNodeType.FUNCTION_DEF,
                     name=node.name,
                     params=[arg.arg for arg in node.args.args],
+                    body_len=len(node.body),
                 )
                 for stmt in node.body:
                     cidx = add(stmt, idx)
@@ -298,7 +305,7 @@ class ASTSimplifier:
 
             # Control flow
             if isinstance(node, ast.For):
-                idx = graph.add_node(ASTNodeType.FOR)
+                idx = graph.add_node(ASTNodeType.FOR, body_len=len(node.body), orelse_len=len(node.orelse or []))
                 t = add(node.target, idx)
                 i = add(node.iter, idx)
                 link(idx, t)
@@ -312,7 +319,7 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.While):
-                idx = graph.add_node(ASTNodeType.WHILE)
+                idx = graph.add_node(ASTNodeType.WHILE, body_len=len(node.body), orelse_len=len(node.orelse or []))
                 test_idx = add(node.test, idx)
                 link(idx, test_idx)
                 for stmt in node.body:
@@ -324,7 +331,7 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.If):
-                idx = graph.add_node(ASTNodeType.IF)
+                idx = graph.add_node(ASTNodeType.IF, body_len=len(node.body), orelse_len=len(node.orelse or []))
                 test_idx = add(node.test, idx)
                 link(idx, test_idx)
                 for stmt in node.body:
@@ -350,7 +357,7 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.Assign):
-                idx = graph.add_node(ASTNodeType.ASSIGNMENT)
+                idx = graph.add_node(ASTNodeType.ASSIGNMENT, num_targets=len(node.targets))
                 for tgt in node.targets:
                     t = add(tgt, idx)
                     link(idx, t)
@@ -359,7 +366,8 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.AugAssign):
-                idx = graph.add_node(ASTNodeType.AUGMENTED_ASSIGNMENT, op=binop_map.get(type(node.op), type(node.op).__name__))
+                aug_map: Dict[Any, str] = {ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=", ast.Mod: "%=", ast.Pow: "**="}
+                idx = graph.add_node(ASTNodeType.AUGMENTED_ASSIGNMENT, op=aug_map.get(type(node.op), type(node.op).__name__))
                 t = add(node.target, idx)
                 v = add(node.value, idx)
                 link(idx, t)
@@ -416,6 +424,15 @@ class ASTSimplifier:
                 for arg in node.args:
                     a = add(arg, idx)
                     link(idx, a)
+                # Keyword arguments (e.g., reverse=True)
+                for kw in node.keywords:
+                    if kw.arg is None:
+                        # Skip **kwargs for now
+                        continue
+                    kw_idx = graph.add_node(ASTNodeType.KEYWORD_ARG, arg=kw.arg)
+                    v = add(kw.value, kw_idx)
+                    link(kw_idx, v)
+                    link(idx, kw_idx)
                 return idx
 
             if isinstance(node, ast.Attribute):
@@ -467,7 +484,7 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.Tuple):
-                idx = graph.add_node(ASTNodeType.LIST)
+                idx = graph.add_node(ASTNodeType.TUPLE)
                 for elt in node.elts:
                     e = add(elt, idx)
                     link(idx, e)
@@ -550,356 +567,3 @@ class ASTSimplifier:
                 children[parent_idx] = ordered_children
 
         return children
-
-    @staticmethod
-    def ast_to_program(graph: Dict[str, Any]) -> str:
-        """Convert AST graph back to Python code string.
-
-        This is a simplified reconstruction that handles the core language constructs
-        supported by our AST representation.
-        """
-        nodes = graph["nodes"]
-        edges = graph["edges"]
-
-        # Build children map for efficient traversal
-        children = ASTSimplifier._build_children_lists(len(nodes), edges)
-
-        # Start from the module node (index 0)
-        module_idx = 0
-
-        def indent_block(text: str, levels: int = 1) -> str:
-            pad = "    " * levels
-            lines = text.splitlines()
-            if not lines:
-                return pad
-            return "\n".join(pad + line if line else pad for line in lines)
-
-        def reconstruct_node(idx: int) -> str:
-            """Recursively reconstruct a node and its children."""
-            if idx >= len(nodes):
-                raise ValueError(f"Invalid node index at node #{idx}")
-
-            node = nodes[idx]
-            node_type = node["type"]
-            if isinstance(node_type, ASTNodeType):
-                node_type = node_type.value
-
-            # Get children in order
-            node_children = children.get(idx, [])
-
-            def _is_invalid(code_str: str) -> bool:
-                if code_str is None:
-                    return True
-                stripped = code_str.strip()
-                if stripped == "":
-                    return True
-                # Treat our placeholders as invalid expressions in code positions
-                return stripped.startswith("#") or "<invalid" in stripped
-
-            def _sanitize_identifier(name: str, default: str) -> str:
-                try:
-                    if isinstance(name, str) and name.isidentifier():
-                        return name
-                except Exception:
-                    pass
-                return default
-
-            def _raise_invalid(reason: str, node_idx: int, node_obj: Dict[str, Any]) -> None:
-                ntype = node_obj.get("type")
-                # Normalize enum types for display
-                if isinstance(ntype, ASTNodeType):
-                    ntype = ntype.value
-                child_count = len(children.get(node_idx, []))
-                raise ValueError(f"{reason} at node #{node_idx} (type={ntype}, children={child_count})")
-
-            if node_type == "module":
-                # Module contains function definitions
-                if node_children:
-                    return "\n".join(reconstruct_node(child) for child in node_children)
-                return ""
-
-            elif node_type == "function_def":
-                name = node.get("name", "program")
-                params = node.get("params", ["n"])
-                param_str = ", ".join(params)
-
-                # Get function body statements
-                body_stmts: List[str] = [reconstruct_node(child) for child in node_children]
-
-                body_text = "\n".join(body_stmts)
-                body = indent_block(body_text, levels=1)
-                if body:
-                    body = "\n" + body + "\n"
-
-                return f"def {name}({param_str}):{body}"
-
-            elif node_type == "return":
-                if node_children:
-                    value = reconstruct_node(node_children[0])
-                    return f"return {value}"
-                return "return"
-
-            elif node_type == "assignment":
-                if len(node_children) >= 2:
-                    target = reconstruct_node(node_children[0])
-                    value = reconstruct_node(node_children[1])
-                    # If either side is invalid/comment placeholder, mark as invalid assignment
-                    if (not target) or target.lstrip().startswith("#") or (not value) or value.lstrip().startswith("#"):
-                        _raise_invalid("Invalid assignment", idx, node)
-                    return f"{target} = {value}"
-                _raise_invalid("Invalid assignment (arity)", idx, node)
-                return ""
-
-            elif node_type == "augmented_assignment":
-                op = node.get("op", "+=")
-                allowed_aug = {"+=", "-=", "*=", "/=", "//=", "%=", "**=", "<<=", ">>=", "|=", "^=", "&="}
-                if op not in allowed_aug:
-                    op = "+="
-                if len(node_children) >= 2:
-                    target = reconstruct_node(node_children[0])
-                    value = reconstruct_node(node_children[1])
-                    if _is_invalid(target):
-                        target = "x"
-                    if _is_invalid(value):
-                        value = "0"
-                    return f"{target} {op} {value}"
-                return f"# <invalid_augmented_assignment_{op}>"
-
-            elif node_type == "if":
-                if len(node_children) >= 2:
-                    condition = reconstruct_node(node_children[0])
-                    if _is_invalid(condition):
-                        _raise_invalid("Invalid if condition", idx, node)
-                    body_code = reconstruct_node(node_children[1]) if len(node_children) >= 2 else ""
-                    if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
-                        body_code = "pass"
-                    body = indent_block(body_code, levels=1)
-
-                    # Check if there's an else clause
-                    else_body = ""
-                    if len(node_children) >= 3:
-                        else_code = reconstruct_node(node_children[2])
-                        if _is_invalid(else_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in else_code.splitlines()):
-                            else_code = "pass"
-                        else_body = "\nelse:\n" + indent_block(else_code, levels=1)
-
-                    return f"if {condition}:\n{body}{else_body}"
-                return "# <invalid_if>"
-
-            elif node_type == "for":
-                if len(node_children) >= 2:
-                    if len(node_children) >= 3:
-                        target = reconstruct_node(node_children[0])
-                        iterator = reconstruct_node(node_children[1])
-                        body_children = node_children[2:]
-                    else:
-                        # Fallback shape: assume child0 is iterator and synthesize a default target
-                        target = "i"
-                        iterator = reconstruct_node(node_children[0])
-                        body_children = node_children[1:]
-                    if _is_invalid(iterator):
-                        _raise_invalid("Invalid for iterator", idx, node)
-                    if target is None or str(target).strip() == "":
-                        target = "i"
-                    body_parts = [reconstruct_node(child) for child in body_children] if body_children else []
-                    body_code = "\n".join(body_parts) if body_parts else ""
-                    if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
-                        body_code = "pass"
-                    body = indent_block(body_code, levels=1)
-                    return f"for {target} in {iterator}:\n{body}"
-                _raise_invalid("Invalid for (arity)", idx, node)
-                return ""
-
-            elif node_type == "while":
-                if len(node_children) >= 1:
-                    condition = reconstruct_node(node_children[0]) if len(node_children) >= 1 else "True"
-                    if _is_invalid(condition):
-                        _raise_invalid("Invalid while condition", idx, node)
-                    body_parts = [reconstruct_node(child) for child in node_children[1:]] if len(node_children) >= 2 else []
-                    body_code = "\n".join(body_parts) if body_parts else ""
-                    if _is_invalid(body_code) or all((ln.strip() == "" or ln.lstrip().startswith('#')) for ln in body_code.splitlines()):
-                        body_code = "pass"
-                    body = indent_block(body_code, levels=1)
-                    return f"while {condition}:\n{body}"
-                _raise_invalid("Invalid while (arity)", idx, node)
-                return ""
-
-            elif node_type == "variable":
-                # Use the actual variable name if available, otherwise fall back to var_id
-                var_name = node.get("name")
-                if var_name:
-                    return var_name
-                else:
-                    var_id = node.get("var_id", 0)
-                    return f"var_{var_id}"
-
-            elif node_type == "constant":
-                value = node.get("value")
-                dtype = node.get("dtype", "int")
-
-                if dtype == "str":
-                    return f'"{value}"'
-                elif dtype == "bool":
-                    return str(value)
-                else:  # int or default
-                    return str(value)
-
-            elif node_type == "binary_operation":
-                op = node.get("op", "+")
-                allowed_bin = {"+", "-", "*", "/", "//", "%", "**", "<<", ">>", "|", "^", "&"}
-                if op not in allowed_bin:
-                    op = "+"
-                if len(node_children) >= 2:
-                    left = reconstruct_node(node_children[0])
-                    right = reconstruct_node(node_children[1])
-                    return f"({left} {op} {right})"
-                # Fallback placeholder for missing operand to keep code parseable
-                left = reconstruct_node(node_children[0]) if node_children else "0"
-                return f"({left} {op} 0)"
-
-            elif node_type == "unary_operation":
-                op = node.get("op", "-")
-                allowed_un = {"-", "+", "not", "~"}
-                if op not in allowed_un:
-                    op = "-"
-                if node_children:
-                    operand = reconstruct_node(node_children[0])
-                    if op == "not":
-                        return f"not {operand}"
-                    return f"{op}({operand})"
-                return f"# <invalid_unary_op_{op}>"
-
-            elif node_type == "comparison":
-                op = node.get("op", "==")
-                allowed_cmp = {"==", "!=", "<", "<=", ">", ">=", "in", "not in", "is", "is not"}
-                if op not in allowed_cmp:
-                    op = "=="
-                if len(node_children) >= 2:
-                    left = reconstruct_node(node_children[0])
-                    right = reconstruct_node(node_children[1])
-                    return f"({left} {op} {right})"
-                return f"(0 {op} 0)"
-
-            elif node_type == "boolean_operation":
-                op = node.get("op", "and")
-                if op not in {"and", "or"}:
-                    op = "and"
-                if len(node_children) >= 2:
-                    left = reconstruct_node(node_children[0])
-                    right = reconstruct_node(node_children[1])
-                    return f"({left} {op} {right})"
-                return f"(0 {op} 0)"
-
-            elif node_type == "function_call":
-                raw_name = node.get("function", "f")
-                func_name = _sanitize_identifier(str(raw_name), "f")
-                # Human-friendly rewrite: getitem(a,b) -> a[b]
-                if func_name == "getitem" and len(node_children) >= 2:
-                    value = reconstruct_node(node_children[0])
-                    index = reconstruct_node(node_children[1])
-                    return f"{value}[{index}]"
-
-                # Method-call pretty print for common patterns where we encoded
-                # an attribute call as FUNCTION_CALL with the object as arg[0]
-                method_like = {"append", "upper", "lower", "add", "extend", "insert", "pop", "clear"}
-                if func_name in method_like and len(node_children) >= 1:
-                    obj = reconstruct_node(node_children[0])
-                    call_args = [reconstruct_node(child) for child in node_children[1:]]
-                    args_str = ", ".join(call_args)
-                    return f"{obj}.{func_name}({args_str})"
-
-                # Recognize sorted(x)[::-1] pattern we normalized from reverse=True
-                if func_name == "sorted" and len(node_children) == 1:
-                    # If the single argument is a subscript slice with step -1, print as sorted(arg, reverse=True)
-                    arg_code = reconstruct_node(node_children[0])
-                    if arg_code.endswith("[::-1]"):
-                        base = arg_code[:-6]
-                        return f"sorted({base}, reverse=True)"
-
-                if node_children:
-                    args = [reconstruct_node(child) for child in node_children]
-                    # Special-case known builtins with fixed arities
-                    if func_name == "range":
-                        if len(args) == 0:
-                            args_str = "0"
-                        elif len(args) == 1:
-                            args_str = args[0]
-                        elif len(args) == 2:
-                            args_str = ", ".join(args[:2])
-                        else:
-                            args_str = ", ".join(args[:3])
-                    elif func_name == "len":
-                        args_str = args[0] if args else "[]"
-                    elif func_name == "sum":
-                        args_str = args[0] if args else "[]"
-                    elif func_name in {"max", "min"}:
-                        # Allow multiple positional args
-                        if len(args) <= 1:
-                            args_str = args[0] if args else ""
-                        else:
-                            args_str = f"[{', '.join(args)}]"
-                    elif func_name in {"set", "sorted", "str", "int", "float", "bool", "list", "tuple"}:
-                        # These are 0/1-arg constructors in practice (sorted requires iterable).
-                        if len(args) <= 1:
-                            if func_name == "sorted" and len(args) == 0:
-                                args_str = "[]"
-                            else:
-                                args_str = args[0] if args else ""
-                        else:
-                            # Pack multiple args into a single iterable
-                            args_str = f"[{', '.join(args)}]"
-                    else:
-                        args_str = ", ".join(args)
-                    return f"{func_name}({args_str})"
-                return f"{func_name}()"
-
-            elif node_type == "list":
-                if node_children:
-                    elements = [reconstruct_node(child) for child in node_children]
-                    return f"[{', '.join(elements)}]"
-                return "[]"
-
-            elif node_type == "attribute":
-                attr_name = _sanitize_identifier(str(node.get("attr", "attr")), "attr")
-                if node_children:
-                    obj = reconstruct_node(node_children[0])
-                    if _is_invalid(obj):
-                        obj = "x"
-                    return f"{obj}.{attr_name}"
-                return f"x.{attr_name}"
-
-            elif node_type == "subscript":
-                if len(node_children) >= 2:
-                    value = reconstruct_node(node_children[0])
-                    slice_expr = reconstruct_node(node_children[1])
-                    # Be tolerant: if either side is invalid, substitute a safe literal
-                    if _is_invalid(value):
-                        value = "0"
-                    if _is_invalid(slice_expr):
-                        slice_expr = "0"
-                    return f"{value}[{slice_expr}]"
-                _raise_invalid("Invalid subscript (arity)", idx, node)
-                return ""
-
-            elif node_type == "expression":
-                if node_children:
-                    code = reconstruct_node(node_children[0])
-                    # If expression is just a literal/identifier with no effect under a function body,
-                    # keep it (valid Python). If it is invalid, synthesize pass.
-                    if _is_invalid(code):
-                        return "pass"
-                    return code
-                return "pass"
-
-            else:
-                return f"# <unknown_node_type_{node_type}>"
-
-        # Start reconstruction from the module
-        result = reconstruct_node(module_idx)
-
-        # Clean up the result
-        if result.startswith("#"):
-            raise ValueError("Failed reconstruction: top-level placeholder")
-
-        return result
-
