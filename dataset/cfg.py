@@ -45,6 +45,7 @@ class CFGNonTerminal(Enum):
     CONSTANT = "CONSTANT"
     LIST_EXPR = "LIST_EXPR"
     TUPLE_EXPR = "TUPLE_EXPR"
+    SLICE = "SLICE"
 
     # Utility
     IDENTIFIER = "IDENTIFIER"
@@ -223,6 +224,26 @@ class CFGGrammar:
 
             CFGNonTerminal.NEWLINE: [
                 ["\\n"]
+            ],
+
+            CFGNonTerminal.LIST_EXPR: [
+                ["EXPRESSION"],
+                ["EXPRESSION", "COMMA", "LIST_EXPR"]
+            ],
+
+            CFGNonTerminal.TUPLE_EXPR: [
+                ["EXPRESSION"],
+                ["EXPRESSION", "COMMA", "TUPLE_EXPR"]
+            ],
+
+            CFGNonTerminal.SLICE: [
+                ["COLON"],
+                ["EXPRESSION", "COLON"],
+                ["COLON", "EXPRESSION"],
+                ["EXPRESSION", "COLON", "EXPRESSION"],
+                ["COLON", "COLON", "EXPRESSION"],
+                ["EXPRESSION", "COLON", "COLON"],
+                ["EXPRESSION", "COLON", "EXPRESSION", "COLON", "EXPRESSION"]
             ]
         }
 
@@ -361,6 +382,33 @@ class CFGCodeGenerator:
 
         return children
 
+    def _get_operator_from_node(self, node: Dict[str, Any]) -> str:
+        """Extract the operator from a node if it has one"""
+        return node.get("op", "")
+
+    def _add_parentheses_if_needed(self, expr_code: str, parent_op: str, child_op: str) -> str:
+        """Add parentheses around expression if operator precedence requires it"""
+        # Define operator precedence (higher number = higher precedence)
+        precedence = {
+            "**": 4,
+            "*": 3, "/": 3, "//": 3, "%": 3,
+            "+": 2, "-": 2,
+            "==": 1, "!=": 1, "<": 1, "<=": 1, ">": 1, ">=": 1,
+            "and": 0, "or": 0
+        }
+
+        parent_prec = precedence.get(parent_op, 0)
+        child_prec = precedence.get(child_op, 0)
+
+        # If child has lower precedence than parent, add parentheses
+        if child_prec < parent_prec:
+            # Only add parentheses if the child expression is actually a binary operation
+            # Don't add parentheses around simple variables, constants, or function calls
+            if any(op in expr_code for op in precedence.keys()):
+                return f"({expr_code})"
+
+        return expr_code
+
     def _generate_from_node(self, nodes: List[Dict[str, Any]], children: Dict[int, List[int]],
                            node_idx: int) -> str:
         """Generate code for a specific node and its children"""
@@ -413,9 +461,21 @@ class CFGCodeGenerator:
             # Generate assignment: target = value
             child_indices = children.get(node_idx, [])
             if len(child_indices) >= 2:
-                target_code = self._generate_from_node(nodes, children, child_indices[0])
-                value_code = self._generate_from_node(nodes, children, child_indices[1])
-                return f"{target_code} = {value_code}"
+                # Handle tuple assignments: a, b = b, a % b
+                # First children are targets, last child is the value
+                targets = []
+                for i in range(len(child_indices) - 1):
+                    target_code = self._generate_from_node(nodes, children, child_indices[i])
+                    if target_code.strip():
+                        targets.append(target_code)
+
+                value_code = self._generate_from_node(nodes, children, child_indices[-1])
+
+                if len(targets) == 1:
+                    return f"{targets[0]} = {value_code}"
+                else:
+                    targets_str = ", ".join(targets)
+                    return f"{targets_str} = {value_code}"
             else:
                 return self._generate_children(nodes, children, node_idx)
 
@@ -437,6 +497,11 @@ class CFGCodeGenerator:
             if len(child_indices) >= 2:
                 left_code = self._generate_from_node(nodes, children, child_indices[0])
                 right_code = self._generate_from_node(nodes, children, child_indices[1])
+
+                # Add parentheses if needed based on operator precedence
+                left_code = self._add_parentheses_if_needed(left_code, op, self._get_operator_from_node(nodes[child_indices[0]]))
+                right_code = self._add_parentheses_if_needed(right_code, op, self._get_operator_from_node(nodes[child_indices[1]]))
+
                 return f"{left_code} {op} {right_code}"
             else:
                 return self._generate_children(nodes, children, node_idx)
@@ -547,9 +612,42 @@ class CFGCodeGenerator:
             if len(child_indices) >= 2:
                 left_code = self._generate_from_node(nodes, children, child_indices[0])
                 right_code = self._generate_from_node(nodes, children, child_indices[1])
+
+                # Add parentheses if needed based on operator precedence
+                left_code = self._add_parentheses_if_needed(left_code, op, self._get_operator_from_node(nodes[child_indices[0]]))
+                right_code = self._add_parentheses_if_needed(right_code, op, self._get_operator_from_node(nodes[child_indices[1]]))
+
                 return f"{left_code} {op} {right_code}"
             else:
                 return self._generate_children(nodes, children, node_idx)
+
+        elif node_type == ASTNodeType.BOOLEAN_OPERATION:
+            # Generate boolean operation: left op right
+            child_indices = children.get(node_idx, [])
+            op = node.get("op", "and")
+            if len(child_indices) >= 2:
+                left_code = self._generate_from_node(nodes, children, child_indices[0])
+                right_code = self._generate_from_node(nodes, children, child_indices[1])
+
+                # Add parentheses if needed based on operator precedence
+                left_code = self._add_parentheses_if_needed(left_code, op, self._get_operator_from_node(nodes[child_indices[0]]))
+                right_code = self._add_parentheses_if_needed(right_code, op, self._get_operator_from_node(nodes[child_indices[1]]))
+
+                return f"{left_code} {op} {right_code}"
+            else:
+                return self._generate_children(nodes, children, node_idx)
+
+        elif node_type == ASTNodeType.UNARY_OPERATION:
+            # Generate unary operation: op operand
+            child_indices = children.get(node_idx, [])
+            op = node.get("op", "-")
+            if child_indices:
+                operand_code = self._generate_from_node(nodes, children, child_indices[0])
+                # Add parentheses around operand if it's a binary operation
+                operand_code = self._add_parentheses_if_needed(operand_code, op, self._get_operator_from_node(nodes[child_indices[0]]))
+                return f"{op}{operand_code}"
+            else:
+                return op
 
         elif node_type == ASTNodeType.FUNCTION_CALL:
             # Generate function call (including method calls)
@@ -565,12 +663,19 @@ class CFGCodeGenerator:
 
                     # Get arguments (skip the method/attribute)
                     args = []
+                    kw_args = []
                     for child_idx in child_indices[1:]:
-                        arg_code = self._generate_from_node(nodes, children, child_idx)
-                        if arg_code.strip():
-                            args.append(arg_code)
+                        child_node = nodes[child_idx]
+                        if child_node.get("type") == ASTNodeType.KEYWORD_ARG:
+                            kw_args.append(self._generate_from_node(nodes, children, child_idx))
+                        else:
+                            arg_code = self._generate_from_node(nodes, children, child_idx)
+                            if arg_code.strip():
+                                args.append(arg_code)
 
-                    args_str = ", ".join(args)
+                    # Combine positional and keyword arguments
+                    all_args = args + kw_args
+                    args_str = ", ".join(all_args)
                     return f"{method_code}({args_str})"
 
                 elif func_name:
@@ -584,12 +689,19 @@ class CFGCodeGenerator:
                             args_start = 1  # Skip the function name variable
 
                     args = []
+                    kw_args = []
                     for child_idx in child_indices[args_start:]:
-                        arg_code = self._generate_from_node(nodes, children, child_idx)
-                        if arg_code.strip():
-                            args.append(arg_code)
+                        child_node = nodes[child_idx]
+                        if child_node.get("type") == ASTNodeType.KEYWORD_ARG:
+                            kw_args.append(self._generate_from_node(nodes, children, child_idx))
+                        else:
+                            arg_code = self._generate_from_node(nodes, children, child_idx)
+                            if arg_code.strip():
+                                args.append(arg_code)
 
-                    args_str = ", ".join(args)
+                    # Combine positional and keyword arguments
+                    all_args = args + kw_args
+                    args_str = ", ".join(all_args)
                     return f"{func_name}({args_str})"
 
                 else:
@@ -598,12 +710,19 @@ class CFGCodeGenerator:
 
                     # Get arguments (skip the function)
                     args = []
+                    kw_args = []
                     for child_idx in child_indices[1:]:
-                        arg_code = self._generate_from_node(nodes, children, child_idx)
-                        if arg_code.strip():
-                            args.append(arg_code)
+                        child_node = nodes[child_idx]
+                        if child_node.get("type") == ASTNodeType.KEYWORD_ARG:
+                            kw_args.append(self._generate_from_node(nodes, children, child_idx))
+                        else:
+                            arg_code = self._generate_from_node(nodes, children, child_idx)
+                            if arg_code.strip():
+                                args.append(arg_code)
 
-                    args_str = ", ".join(args)
+                    # Combine positional and keyword arguments
+                    all_args = args + kw_args
+                    args_str = ", ".join(all_args)
                     return f"{func_code}({args_str})"
             else:
                 # No children, use function name if available
@@ -611,6 +730,16 @@ class CFGCodeGenerator:
                     return f"{func_name}()"
                 else:
                     return "func()"
+
+        elif node_type == ASTNodeType.KEYWORD_ARG:
+            # Generate keyword argument: name=value
+            arg_name = node.get("arg", "arg")
+            child_indices = children.get(node_idx, [])
+            if child_indices:
+                value_code = self._generate_from_node(nodes, children, child_indices[0])
+                return f"{arg_name}={value_code}"
+            else:
+                return f"{arg_name}=None"
 
         elif node_type == ASTNodeType.VARIABLE:
             # Generate variable name
@@ -638,6 +767,71 @@ class CFGCodeGenerator:
             else:
                 # Empty list
                 return "[]"
+
+        elif node_type == ASTNodeType.TUPLE:
+            # Generate tuple literal
+            child_indices = children.get(node_idx, [])
+            if child_indices:
+                # Tuple with elements
+                elements = []
+                for child_idx in child_indices:
+                    element_code = self._generate_from_node(nodes, children, child_idx)
+                    if element_code.strip():
+                        elements.append(element_code)
+                return f"({', '.join(elements)})"
+            else:
+                # Empty tuple
+                return "()"
+
+        elif node_type == ASTNodeType.SLICE:
+            # Generate slice operation: start:stop:step (without brackets)
+            # Brackets are added by the SUBSCRIPT node that contains this slice
+            child_indices = children.get(node_idx, [])
+            if len(child_indices) >= 3:
+                # Full slice: start:stop:step
+                start_code = self._generate_from_node(nodes, children, child_indices[0]) if child_indices[0] else ""
+                stop_code = self._generate_from_node(nodes, children, child_indices[1]) if child_indices[1] else ""
+                step_code = self._generate_from_node(nodes, children, child_indices[2]) if child_indices[2] else ""
+
+                # Handle the case where start and stop are None (empty slice)
+                if not start_code.strip() and not stop_code.strip():
+                    if step_code.strip():
+                        return f"::{step_code}"
+                    else:
+                        return "::"
+                else:
+                    slice_parts = []
+                    if start_code.strip():
+                        slice_parts.append(start_code)
+                    slice_parts.append("")  # Always include the colon
+                    if stop_code.strip():
+                        slice_parts.append(stop_code)
+                    if step_code.strip():
+                        slice_parts.append("")
+                        slice_parts.append(step_code)
+
+                    return ":".join(slice_parts)
+            elif len(child_indices) == 2:
+                # Partial slice: start:stop or :stop:step
+                first_code = self._generate_from_node(nodes, children, child_indices[0]) if child_indices[0] else ""
+                second_code = self._generate_from_node(nodes, children, child_indices[1]) if child_indices[1] else ""
+
+                if first_code.strip() and second_code.strip():
+                    return f"{first_code}:{second_code}"
+                elif first_code.strip():
+                    return f"{first_code}:"
+                else:
+                    return f":{second_code}"
+            elif len(child_indices) == 1:
+                # Single slice: start: or :stop
+                code = self._generate_from_node(nodes, children, child_indices[0])
+                if code.strip():
+                    return f"{code}:"
+                else:
+                    return ":"
+            else:
+                # Empty slice: :
+                return ":"
 
         elif node_type == ASTNodeType.SUBSCRIPT:
             # Generate subscript access: obj[index]

@@ -1484,7 +1484,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=7, output=7)
         ],
         implementation="""def program(n):
-    return int(str(n)[::-1])"""
+    num_str = str(n)
+    reversed_str = ""
+    for i in range(len(num_str)-1, -1, -1):
+        reversed_str += num_str[i]
+    return int(reversed_str)"""
     ))
 
     registry.register(ProgramSpecification(

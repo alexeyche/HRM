@@ -24,9 +24,9 @@ class ASTNodeType(Enum):
     AUGMENTED_ASSIGNMENT = "augmented_assignment"  # +=, -=, etc.
 
     # Expressions
-    BINARY_OPERATION = "binary_operation"  # +, -, *, /, %, **, etc.
-    UNARY_OPERATION = "unary_operation"    # +, -, not
-    COMPARISON = "comparison"       # ==, !=, <, <=, >, >=
+    BINARY_OPERATION = "binary_operation"  # Binary operations like +, -, *, /
+    UNARY_OPERATION = "unary_operation"    # Unary operations like -, +, not
+    COMPARISON = "comparison"              # Comparisons like ==, !=, <, >"
     BOOLEAN_OPERATION = "boolean_operation"  # and, or
     FUNCTION_CALL = "function_call" # Function call
     ATTRIBUTE = "attribute"         # Object attribute access
@@ -207,6 +207,17 @@ class ASTSimplifier:
                         "lower": traverse_to_readable(node.lower) if node.lower else None,
                         "upper": traverse_to_readable(node.upper) if node.upper else None,
                         "step": traverse_to_readable(node.step) if node.step else None
+                    }
+                }
+            elif isinstance(node, ast.UnaryOp):
+                # Handle unary operations like -1, +1, not x
+                op_map = {ast.USub: "-", ast.UAdd: "+", ast.Not: "not"}
+                op_name = op_map.get(type(node.op), str(type(node.op).__name__))
+                operand = traverse_to_readable(node.operand)
+                return {
+                    "unary_op": {
+                        "op": op_name,
+                        "operand": operand
                     }
                 }
             elif isinstance(node, ast.BoolOp):
