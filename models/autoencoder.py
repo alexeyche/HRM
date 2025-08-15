@@ -71,7 +71,7 @@ class ProgramAutoencoder(nn.Module):
         """Return mask tensor [B, T, num_ast] where True = valid.
 
         Expects batch_ast_ids of shape [B, T] with values in [0, num_ast] where value == num_ast denotes BOS.
-        The mask at timestep t corresponds to valid next actions after applying prefix up to t-1 (ignores BOS tokens in state).
+        The mask at timestep t corresponds to valid next AST tokens after applying prefix up to t-1 (ignores BOS tokens in state).
         """
 
         B, T = batch_ast_ids.shape
@@ -132,7 +132,7 @@ class ProgramAutoencoder(nn.Module):
             tgt_mask=causal_mask,
         )  # [B, T, d]
 
-        logits = self.out_proj(dec_out)  # [B, T, num_actions]
+        logits = self.out_proj(dec_out)  # [B, T, num_ast]
 
         # Apply grammar mask if provided/compute
         if valid_ast_mask is None:
