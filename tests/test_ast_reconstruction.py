@@ -65,6 +65,13 @@ def test_registry_programs_roundtrip():
 
         ast_graph = ASTSimplifier.ast_to_graph(code)
 
+        # Debug output
+        log.info("AST Graph:")
+        for i, node in enumerate(ast_graph["nodes"]):
+            log.info(f"  Node {i}: {node}")
+        for edge in ast_graph["edges"]:
+            log.info(f"  Edge: {edge}")
+
         # Generate code using CFG
         generator = CFGCodeGenerator()
         reconstructed_code = generator.generate_code_from_ast_graph(ast_graph)

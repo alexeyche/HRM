@@ -1,4 +1,7 @@
-from dataset.ast import ASTSimplifier, ASTNodeType, EdgeType
+from dataset.ast import (
+    ASTSimplifier, ASTNodeType, EdgeType,
+    ASTConstant, ASTVariable, ASTVariableSymbol
+)
 from dataset.encoding import GraphEncoder
 
 
@@ -15,14 +18,14 @@ def program(n):
     assert len(eg.edge_index[0]) == len(graph["edges"])  # E
     # '+' operator present
     binop_idx = next(
-        i for i, n in enumerate(graph["nodes"]) if n["type"] == ASTNodeType.BINARY_OPERATION
+        i for i, n in enumerate(graph["nodes"]) if n.type == ASTNodeType.BINARY_OPERATION
     )
     assert int(eg.op_id[binop_idx]) > 1  # in vocab (not PAD/UNK)
     # constant 1 encoded
     const_idx = next(
         i
         for i, n in enumerate(graph["nodes"])
-        if n["type"] == ASTNodeType.CONSTANT and n.get("dtype") == "int" and n.get("value") == 1
+        if n.type == ASTNodeType.CONSTANT and n.cast(ASTConstant).dtype == "int" and n.cast(ASTConstant).value == 1
     )
     # either exact id or numeric features non-zero
     cond = (int(eg.const_exact_int_id[const_idx]) >= 0) or any(v != 0 for v in eg.const_numeric[const_idx])
@@ -42,8 +45,8 @@ def program(a, b):
 
     nodes = graph["nodes"]
     # Find a variable occurrence and its symbol node for 'a'
-    var_occ_idx = next(i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.VARIABLE and n.get("name") == "a")
-    sym_idx = next(i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.VARIABLE_SYMBOL and n.get("name") == "a")
+    var_occ_idx = next(i for i, n in enumerate(nodes) if n.type == ASTNodeType.VARIABLE and n.cast(ASTVariable).name == "a")
+    sym_idx = next(i for i, n in enumerate(nodes) if n.type == ASTNodeType.VARIABLE_SYMBOL and n.cast(ASTVariableSymbol).name == "a")
 
     # Check there is a SYMBOL edge
     has_symbol = any(
@@ -52,9 +55,11 @@ def program(a, b):
     )
     assert has_symbol
     # And var_id feature matches between occurrence and symbol node (symbol node var_id isn't encoded specially but should be equal in raw attrs)
-    assert nodes[var_occ_idx]["var_id"] == nodes[sym_idx]["var_id"]
+    var_node = nodes[var_occ_idx].cast(ASTVariable)
+    sym_node = nodes[sym_idx].cast(ASTVariableSymbol)
+    assert var_node.var_id == sym_node.var_id
     # Encoded var_id for occurrence should be that var_id (non-zero)
-    assert int(eg.var_id[var_occ_idx]) == nodes[var_occ_idx]["var_id"]
+    assert int(eg.var_id[var_occ_idx]) == var_node.var_id
 
 
 def test_position_scalars_are_normalized():
@@ -80,7 +85,7 @@ def program(s):
     enc = GraphEncoder()
     eg = enc.encode(graph)
     # Attribute node should have attribute id set
-    attr_idx = next(i for i, n in enumerate(graph["nodes"]) if n["type"] == ASTNodeType.ATTRIBUTE)
+    attr_idx = next(i for i, n in enumerate(graph["nodes"]) if n.type == ASTNodeType.ATTRIBUTE)
     assert int(eg.attribute_name_id[attr_idx]) > 1
 
 

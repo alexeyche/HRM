@@ -8,7 +8,7 @@ and generate code deterministically using greedy selection instead of random cho
 from typing import Dict, Any, List, Tuple, Optional, Set
 from enum import Enum
 import numpy as np
-from .ast import ASTNodeType, EdgeType
+from .ast import *
 
 
 class CFGNonTerminal(Enum):
@@ -382,9 +382,11 @@ class CFGCodeGenerator:
 
         return children
 
-    def _get_operator_from_node(self, node: Dict[str, Any]) -> str:
+    def _get_operator_from_node(self, node: ASTNode) -> str:
         """Extract the operator from a node if it has one"""
-        return node.get("op", "")
+        if isinstance(node, ASTNodeWithOp):
+            return node.op
+        return ""
 
     def _add_parentheses_if_needed(self, expr_code: str, parent_op: str, child_op: str) -> str:
         """Add parentheses around expression if operator precedence requires it"""
@@ -409,11 +411,11 @@ class CFGCodeGenerator:
 
         return expr_code
 
-    def _generate_from_node(self, nodes: List[Dict[str, Any]], children: Dict[int, List[int]],
+    def _generate_from_node(self, nodes: List[ASTNode], children: Dict[int, List[int]],
                            node_idx: int) -> str:
         """Generate code for a specific node and its children"""
-        node = nodes[node_idx]
-        node_type = node["type"]
+        node_base = nodes[node_idx]
+        node_type = node_base.type
 
         if isinstance(node_type, str):
             # Convert string to enum if needed
@@ -435,8 +437,9 @@ class CFGCodeGenerator:
 
         elif node_type == ASTNodeType.FUNCTION_DEF:
             # Generate function header and body
-            func_name = node.get("name", "function")
-            params = node.get("params", [])
+            node = node_base.cast(ASTFunctionDef)
+            func_name = node.name
+            params = node.params
 
             # Format parameters
             if params:
@@ -482,7 +485,8 @@ class CFGCodeGenerator:
         elif node_type == ASTNodeType.AUGMENTED_ASSIGNMENT:
             # Generate augmented assignment: target op= value
             child_indices = children.get(node_idx, [])
-            op = node.get("op", "+=")
+            node = node_base.cast(ASTAugmentedAssignment)
+            op = node.op
             if len(child_indices) >= 2:
                 target_code = self._generate_from_node(nodes, children, child_indices[0])
                 value_code = self._generate_from_node(nodes, children, child_indices[1])
@@ -493,7 +497,8 @@ class CFGCodeGenerator:
         elif node_type == ASTNodeType.BINARY_OPERATION:
             # Generate binary operation: left op right
             child_indices = children.get(node_idx, [])
-            op = node.get("op", "+")
+            node = node_base.cast(ASTBinaryOperation)
+            op = node.op
             if len(child_indices) >= 2:
                 left_code = self._generate_from_node(nodes, children, child_indices[0])
                 right_code = self._generate_from_node(nodes, children, child_indices[1])
@@ -509,6 +514,7 @@ class CFGCodeGenerator:
         elif node_type == ASTNodeType.RETURN:
             # Generate return statement
             child_indices = children.get(node_idx, [])
+            node = node_base.cast(ASTReturn)
             if child_indices:
                 value_code = self._generate_from_node(nodes, children, child_indices[0])
                 return f"return {value_code}"
@@ -518,14 +524,15 @@ class CFGCodeGenerator:
         elif node_type == ASTNodeType.IF:
             # Generate if statement with proper else handling
             child_indices = children.get(node_idx, [])
+            node = node_base.cast(ASTIf)
             if len(child_indices) >= 2:
                 # First child is the test condition
                 test_code = self._generate_from_node(nodes, children, child_indices[0])
                 header = f"if {test_code}:"
 
                 # Get body_len and orelse_len from node attributes
-                body_len = node.get("body_len", 0)
-                orelse_len = node.get("orelse_len", 0)
+                body_len = node.body_len
+                orelse_len = node.orelse_len
 
                 # Generate if body statements (after test, take body_len children)
                 if_body_parts = []
@@ -561,6 +568,7 @@ class CFGCodeGenerator:
                 return self._generate_children(nodes, children, node_idx)
 
         elif node_type == ASTNodeType.FOR:
+            node = node_base.cast(ASTFor)
             # Generate for loop
             child_indices = children.get(node_idx, [])
             if len(child_indices) >= 3:
@@ -584,6 +592,7 @@ class CFGCodeGenerator:
                 return self._generate_children(nodes, children, node_idx)
 
         elif node_type == ASTNodeType.WHILE:
+            node = node_base.cast(ASTWhile)
             # Generate while loop
             child_indices = children.get(node_idx, [])
             if len(child_indices) >= 2:
@@ -606,9 +615,10 @@ class CFGCodeGenerator:
                 return self._generate_children(nodes, children, node_idx)
 
         elif node_type == ASTNodeType.COMPARISON:
+            node = node_base.cast(ASTComparison)
             # Generate comparison: left op right
             child_indices = children.get(node_idx, [])
-            op = node.get("op", ">")
+            op = node.op
             if len(child_indices) >= 2:
                 left_code = self._generate_from_node(nodes, children, child_indices[0])
                 right_code = self._generate_from_node(nodes, children, child_indices[1])
@@ -622,9 +632,10 @@ class CFGCodeGenerator:
                 return self._generate_children(nodes, children, node_idx)
 
         elif node_type == ASTNodeType.BOOLEAN_OPERATION:
+            node = node_base.cast(ASTBooleanOperation)
             # Generate boolean operation: left op right
             child_indices = children.get(node_idx, [])
-            op = node.get("op", "and")
+            op = node.op
             if len(child_indices) >= 2:
                 left_code = self._generate_from_node(nodes, children, child_indices[0])
                 right_code = self._generate_from_node(nodes, children, child_indices[1])
@@ -640,7 +651,8 @@ class CFGCodeGenerator:
         elif node_type == ASTNodeType.UNARY_OPERATION:
             # Generate unary operation: op operand
             child_indices = children.get(node_idx, [])
-            op = node.get("op", "-")
+            node = node_base.cast(ASTUnaryOperation)
+            op = node.op
             if child_indices:
                 operand_code = self._generate_from_node(nodes, children, child_indices[0])
                 # Add parentheses around operand if it's a binary operation
@@ -650,14 +662,15 @@ class CFGCodeGenerator:
                 return op
 
         elif node_type == ASTNodeType.FUNCTION_CALL:
+            node = node_base.cast(ASTFunctionCall)
             # Generate function call (including method calls)
             child_indices = children.get(node_idx, [])
-            func_name = node.get("function", None)
+            func_name = node.function
 
             if child_indices:
                 # Check if first child is an ATTRIBUTE (method call)
                 first_child = nodes[child_indices[0]]
-                if first_child.get("type") == ASTNodeType.ATTRIBUTE:
+                if first_child.type == ASTNodeType.ATTRIBUTE:
                     # This is a method call: obj.method(args)
                     method_code = self._generate_from_node(nodes, children, child_indices[0])
 
@@ -666,7 +679,7 @@ class CFGCodeGenerator:
                     kw_args = []
                     for child_idx in child_indices[1:]:
                         child_node = nodes[child_idx]
-                        if child_node.get("type") == ASTNodeType.KEYWORD_ARG:
+                        if child_node.type == ASTNodeType.KEYWORD_ARG:
                             kw_args.append(self._generate_from_node(nodes, children, child_idx))
                         else:
                             arg_code = self._generate_from_node(nodes, children, child_idx)
@@ -683,16 +696,16 @@ class CFGCodeGenerator:
                     # Skip first child if it's a VARIABLE with the same name as the function
                     args_start = 0
                     if child_indices and len(child_indices) > 0:
-                        first_child = nodes[child_indices[0]]
-                        if (first_child.get("type") == ASTNodeType.VARIABLE and
-                            first_child.get("name") == func_name):
+                        first_child = nodes[child_indices[0]].cast(ASTVariable)
+                        if (first_child.type == ASTNodeType.VARIABLE and
+                            first_child.name == func_name):
                             args_start = 1  # Skip the function name variable
 
                     args = []
                     kw_args = []
                     for child_idx in child_indices[args_start:]:
                         child_node = nodes[child_idx]
-                        if child_node.get("type") == ASTNodeType.KEYWORD_ARG:
+                        if child_node.type == ASTNodeType.KEYWORD_ARG:
                             kw_args.append(self._generate_from_node(nodes, children, child_idx))
                         else:
                             arg_code = self._generate_from_node(nodes, children, child_idx)
@@ -713,7 +726,7 @@ class CFGCodeGenerator:
                     kw_args = []
                     for child_idx in child_indices[1:]:
                         child_node = nodes[child_idx]
-                        if child_node.get("type") == ASTNodeType.KEYWORD_ARG:
+                        if child_node.type == ASTNodeType.KEYWORD_ARG:
                             kw_args.append(self._generate_from_node(nodes, children, child_idx))
                         else:
                             arg_code = self._generate_from_node(nodes, children, child_idx)
@@ -733,7 +746,8 @@ class CFGCodeGenerator:
 
         elif node_type == ASTNodeType.KEYWORD_ARG:
             # Generate keyword argument: name=value
-            arg_name = node.get("arg", "arg")
+            node = node_base.cast(ASTKeywordArg)
+            arg_name = node.arg
             child_indices = children.get(node_idx, [])
             if child_indices:
                 value_code = self._generate_from_node(nodes, children, child_indices[0])
@@ -743,11 +757,13 @@ class CFGCodeGenerator:
 
         elif node_type == ASTNodeType.VARIABLE:
             # Generate variable name
-            return node.get("name", "var")
+            node = node_base.cast(ASTVariable)
+            return node.name
 
         elif node_type == ASTNodeType.CONSTANT:
             # Generate constant value
-            value = node.get("value", 0)
+            node = node_base.cast(ASTConstant)
+            value = node.value
             if isinstance(value, str):
                 return f'"{value}"'
             else:
@@ -846,7 +862,8 @@ class CFGCodeGenerator:
         elif node_type == ASTNodeType.ATTRIBUTE:
             # Generate attribute access: obj.attr
             child_indices = children.get(node_idx, [])
-            attr_name = node.get("attr", "attr")
+            node = node_base.cast(ASTAttribute)
+            attr_name = node.attr
             if child_indices:
                 obj_code = self._generate_from_node(nodes, children, child_indices[0])
                 return f"{obj_code}.{attr_name}"
@@ -865,14 +882,14 @@ class CFGCodeGenerator:
         # For other node types, try CFG mapping
         cfg_symbol = self.mapper.ast_to_cfg(node_type)
         if cfg_symbol is not None:
-            production = self._select_production(cfg_symbol, node, children.get(node_idx, []))
+            production = self._select_production(cfg_symbol, node_base, children.get(node_idx, []))
             if production is not None:
-                return self._apply_production(production, node, nodes, children, node_idx)
+                return self._apply_production(production, node_base, nodes, children, node_idx)
 
         # Fallback: generate children directly
         return self._generate_children(nodes, children, node_idx)
 
-    def _select_production(self, non_terminal: CFGNonTerminal, node: Dict[str, Any],
+    def _select_production(self, non_terminal: CFGNonTerminal, node: ASTNode,
                           child_indices: List[int]) -> Optional[List[str]]:
         """Select the best production rule for a given non-terminal"""
         productions = self.grammar.get_productions(non_terminal)
@@ -887,7 +904,7 @@ class CFGCodeGenerator:
         # Fallback: return first production
         return productions[0]
 
-    def _production_matches_structure(self, production: List[str], node: Dict[str, Any],
+    def _production_matches_structure(self, production: List[str], node: ASTNode,
                                     child_indices: List[int]) -> bool:
         """Check if a production matches the AST node structure"""
         # Count expected non-terminals in production
@@ -900,16 +917,16 @@ class CFGCodeGenerator:
             return True
 
         # Also check if operator matches for expression productions
-        if "op" in node:
-            operator = node["op"]
+        if isinstance(node, ASTNodeWithOp):
+            operator = node.op
             terminal = self.mapper.operator_to_terminal(operator)
             if operator in production or (terminal and terminal.value in production):
                 return True
 
         return False
 
-    def _apply_production(self, production: List[str], node: Dict[str, Any],
-                         nodes: List[Dict[str, Any]], children: Dict[int, List[int]],
+    def _apply_production(self, production: List[str], node: ASTNode,
+                         nodes: List[ASTNode], children: Dict[int, List[int]],
                          node_idx: int) -> str:
         """Apply a production rule to generate code"""
         result = []
@@ -936,22 +953,22 @@ class CFGCodeGenerator:
                 result.append(symbol)
             elif symbol == "IDENTIFIER":
                 # Use node's name attribute or generate from variable info
-                if "name" in node:
-                    result.append(node["name"])
-                elif "var_id" in node:
-                    result.append(f"var_{node['var_id']}")
+                if isinstance(node, ASTNodeWithName):
+                    result.append(node.name)
+                elif isinstance(node, ASTVariable):
+                    result.append(f"var_{node.var_id}")
                 else:
                     result.append("x")
             elif symbol == "OPERATOR":
                 # Use node's operator attribute
-                if "op" in node:
-                    result.append(node["op"])
+                if isinstance(node, ASTNodeWithOp):
+                    result.append(node.op)
                 else:
                     result.append("+")  # fallback
             elif symbol == "CONSTANT":
                 # Use node's value
-                if "value" in node:
-                    value = node["value"]
+                if isinstance(node, ASTConstant):
+                    value = node.value
                     if isinstance(value, str):
                         result.append(f'"{value}"')
                     else:
@@ -972,7 +989,7 @@ class CFGCodeGenerator:
 
         return "".join(result)
 
-    def _generate_children(self, nodes: List[Dict[str, Any]], children: Dict[int, List[int]],
+    def _generate_children(self, nodes: List[ASTNode], children: Dict[int, List[int]],
                           node_idx: int) -> str:
         """Fallback: generate code by traversing children directly"""
         child_indices = children.get(node_idx, [])

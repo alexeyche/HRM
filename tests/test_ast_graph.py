@@ -2,7 +2,7 @@ from dataset.ast import ASTSimplifier, ASTNodeType, EdgeType
 
 
 def node_indices_by_type(nodes, node_type):
-    return [i for i, n in enumerate(nodes) if n.get("type") == node_type]
+    return [i for i, n in enumerate(nodes) if n.type == node_type]
 
 
 def test_simple_function_with_binop_and_constant():
@@ -15,12 +15,12 @@ def program(n):
     edges = graph["edges"]
 
     # One symbol node for 'n'
-    sym_idxs = [i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.VARIABLE_SYMBOL and n.get("name") == "n"]
+    sym_idxs = [i for i, n in enumerate(nodes) if n.type == ASTNodeType.VARIABLE_SYMBOL and n.name == "n"]
     assert len(sym_idxs) == 1
     symbol_idx = sym_idxs[0]
 
     # One variable occurrence for 'n'
-    var_occ_idxs = [i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.VARIABLE and n.get("name") == "n"]
+    var_occ_idxs = [i for i, n in enumerate(nodes) if n.type == ASTNodeType.VARIABLE and n.name == "n"]
     assert len(var_occ_idxs) >= 1
 
     # Ensure SYMBOL edge from occurrence to symbol node
@@ -28,19 +28,19 @@ def program(n):
     assert has_symbol_edge
 
     # Function def exists with correct name and params
-    fn_idxs = [i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.FUNCTION_DEF and n.get("name") == "program"]
+    fn_idxs = [i for i, n in enumerate(nodes) if n.type == ASTNodeType.FUNCTION_DEF and n.name == "program"]
     assert len(fn_idxs) == 1
-    assert nodes[fn_idxs[0]].get("params") == ["n"]
+    assert nodes[fn_idxs[0]].params == ["n"]
 
     # Return node exists
-    assert any(n["type"] == ASTNodeType.RETURN for n in nodes)
+    assert any(n.type == ASTNodeType.RETURN for n in nodes)
 
     # Binary operation '+' exists
-    binop_idxs = [i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.BINARY_OPERATION and n.get("op") == "+"]
+    binop_idxs = [i for i, n in enumerate(nodes) if n.type == ASTNodeType.BINARY_OPERATION and n.op == "+"]
     assert len(binop_idxs) == 1
 
     # Constant 1 exists and is typed as int
-    const_idxs = [i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.CONSTANT and n.get("dtype") == "int" and n.get("value") == 1]
+    const_idxs = [i for i, n in enumerate(nodes) if n.type == ASTNodeType.CONSTANT and n.dtype == "int" and n.value == 1]
     assert len(const_idxs) == 1
 
     # There should be at least one AST edge out of function def
@@ -60,7 +60,7 @@ def program(a, b):
     edges = graph["edges"]
 
     # Locate the function definition node
-    fn_idx = next(i for i, n in enumerate(nodes) if n["type"] == ASTNodeType.FUNCTION_DEF and n.get("name") == "program")
+    fn_idx = next(i for i, n in enumerate(nodes) if n.type == ASTNodeType.FUNCTION_DEF and n.name == "program")
 
     # Get direct AST-children of the function (order-preserving)
     fn_children = [dst for src, dst, et in edges if src == fn_idx and et == EdgeType.AST]
@@ -69,7 +69,7 @@ def program(a, b):
     assert len(fn_children) >= 3
 
     # Identify assignment children
-    assign_children = [idx for idx in fn_children if nodes[idx]["type"] == ASTNodeType.ASSIGNMENT]
+    assign_children = [idx for idx in fn_children if nodes[idx].type == ASTNodeType.ASSIGNMENT]
     assert len(assign_children) >= 2
 
     # There should be a NEXT_SIBLING edge from the first assignment to the second

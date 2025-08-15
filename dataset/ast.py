@@ -1,7 +1,11 @@
 import ast
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, ClassVar, Type, TypeVar
+
+T = TypeVar('T', bound='ASTNode')
 from enum import Enum
 from collections import defaultdict
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 
 class ASTNodeType(Enum):
@@ -45,6 +49,189 @@ class ASTNodeType(Enum):
     EXPRESSION = "expression"       # Expression wrapper
 
 
+@dataclass
+class ASTNode(ABC):
+    """Base class for AST nodes"""
+    type: ClassVar[ASTNodeType]
+
+    def cast(self, expected_type: Type[T]) -> T:
+        """Cast this node to a specific type, with runtime checking"""
+        assert isinstance(self, expected_type), f"Expected node type {expected_type.__name__}, got {type(self).__name__}"
+        return self  # type: ignore # we've just checked the type
+
+@dataclass
+class ASTNodeWithBody(ASTNode):
+    """Base class for nodes that have a body and optional else block"""
+    body_len: int
+    orelse_len: int
+
+@dataclass
+class ASTNodeWithOp(ASTNode):
+    """Base class for nodes that have an operator"""
+    op: str
+    type: ClassVar[ASTNodeType]  # This will be overridden by subclasses
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Ensure subclasses are also dataclasses
+        if not hasattr(cls, "__dataclass_fields__"):
+            from dataclasses import dataclass
+            dataclass(cls)
+
+
+@dataclass
+class ASTNodeWithName(ASTNode):
+    """Base class for nodes that have a name"""
+    name: str
+
+
+@dataclass
+class ASTModule(ASTNode):
+    """Module node - root of the AST"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.MODULE
+
+
+@dataclass
+class ASTFunctionDef(ASTNodeWithName):
+    """Function definition node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.FUNCTION_DEF
+    params: List[str]
+    body_len: int
+
+
+@dataclass
+class ASTReturn(ASTNode):
+    """Return statement node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.RETURN
+
+
+@dataclass
+class ASTFor(ASTNodeWithBody):
+    """For loop node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.FOR
+
+
+@dataclass
+class ASTWhile(ASTNodeWithBody):
+    """While loop node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.WHILE
+
+
+@dataclass
+class ASTIf(ASTNodeWithBody):
+    """If statement node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.IF
+
+
+@dataclass
+class ASTVariable(ASTNodeWithName):
+    """Variable reference node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.VARIABLE
+    var_id: int
+    ctx: str
+
+
+@dataclass
+class ASTVariableSymbol(ASTNodeWithName):
+    """Variable symbol node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.VARIABLE_SYMBOL
+    var_id: int
+
+
+@dataclass
+class ASTAssignment(ASTNode):
+    """Assignment statement node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.ASSIGNMENT
+    num_targets: int
+
+
+class ASTAugmentedAssignment(ASTNodeWithOp):
+    """Augmented assignment node (+=, -=, etc.)"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.AUGMENTED_ASSIGNMENT
+
+
+class ASTBinaryOperation(ASTNodeWithOp):
+    """Binary operation node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.BINARY_OPERATION
+
+
+class ASTUnaryOperation(ASTNodeWithOp):
+    """Unary operation node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.UNARY_OPERATION
+
+
+@dataclass
+class ASTComparison(ASTNode):
+    """Comparison operation node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.COMPARISON
+    op: str
+    ops: List[str]
+
+
+class ASTBooleanOperation(ASTNodeWithOp):
+    """Boolean operation node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.BOOLEAN_OPERATION
+
+
+@dataclass
+class ASTFunctionCall(ASTNode):
+    """Function call node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.FUNCTION_CALL
+    function: Optional[str]
+
+
+@dataclass
+class ASTKeywordArg(ASTNode):
+    """Keyword argument node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.KEYWORD_ARG
+    arg: str
+
+
+@dataclass
+class ASTAttribute(ASTNode):
+    """Attribute access node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.ATTRIBUTE
+    attr: str
+
+
+@dataclass
+class ASTSubscript(ASTNode):
+    """Subscript node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.SUBSCRIPT
+
+
+@dataclass
+class ASTSlice(ASTNode):
+    """Slice node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.SLICE
+
+
+@dataclass
+class ASTConstant(ASTNode):
+    """Constant value node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.CONSTANT
+    dtype: str
+    value: Any
+
+
+@dataclass
+class ASTList(ASTNode):
+    """List literal node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.LIST
+
+
+@dataclass
+class ASTTuple(ASTNode):
+    """Tuple literal node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.TUPLE
+
+
+@dataclass
+class ASTExpression(ASTNode):
+    """Expression wrapper node"""
+    type: ClassVar[ASTNodeType] = ASTNodeType.EXPRESSION
+
+
 class EdgeType(Enum):
     """Edge types for AST graph representation"""
 
@@ -57,12 +244,12 @@ class ASTGraph:
     """Container for nodes and edges in the simplified AST graph"""
 
     def __init__(self) -> None:
-        self.nodes: List[Dict[str, Any]] = []
+        self.nodes: List[ASTNode] = []
         self.edges: List[Tuple[int, int, EdgeType]] = []
 
-    def add_node(self, node_type: ASTNodeType, **attrs: Any) -> int:
+    def add_node(self, node: ASTNode) -> int:
         idx = len(self.nodes)
-        self.nodes.append({"type": node_type, **attrs})
+        self.nodes.append(node)
         return idx
 
     def add_edge(self, src: int, dst: int, edge_type: EdgeType) -> None:
@@ -263,7 +450,7 @@ class ASTSimplifier:
 
         # Create variable symbol nodes (unique per distinct variable)
         symbol_node_index: Dict[str, int] = {
-            name: graph.add_node(ASTNodeType.VARIABLE_SYMBOL, name=name, var_id=vid)
+            name: graph.add_node(ASTVariableSymbol(name=name, var_id=vid))
             for name, vid in variable_to_id.items()
         }
 
@@ -289,26 +476,25 @@ class ASTSimplifier:
         def add(node: ast.AST, parent: Optional[int] = None) -> int:
             # Structural roots
             if isinstance(node, ast.Module):
-                idx = graph.add_node(ASTNodeType.MODULE)
+                idx = graph.add_node(ASTModule())
                 for stmt in node.body:
                     cidx = add(stmt, idx)
                     link(idx, cidx)
                 return idx
 
             if isinstance(node, ast.FunctionDef):
-                idx = graph.add_node(
-                    ASTNodeType.FUNCTION_DEF,
+                idx = graph.add_node(ASTFunctionDef(
                     name=node.name,
                     params=[arg.arg for arg in node.args.args],
                     body_len=len(node.body),
-                )
+                ))
                 for stmt in node.body:
                     cidx = add(stmt, idx)
                     link(idx, cidx)
                 return idx
 
             if isinstance(node, ast.Return):
-                idx = graph.add_node(ASTNodeType.RETURN)
+                idx = graph.add_node(ASTReturn())
                 if node.value is not None:
                     v = add(node.value, idx)
                     link(idx, v)
@@ -316,7 +502,10 @@ class ASTSimplifier:
 
             # Control flow
             if isinstance(node, ast.For):
-                idx = graph.add_node(ASTNodeType.FOR, body_len=len(node.body), orelse_len=len(node.orelse or []))
+                idx = graph.add_node(ASTFor(
+                    body_len=len(node.body),
+                    orelse_len=len(node.orelse or [])
+                ))
                 t = add(node.target, idx)
                 i = add(node.iter, idx)
                 link(idx, t)
@@ -330,7 +519,10 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.While):
-                idx = graph.add_node(ASTNodeType.WHILE, body_len=len(node.body), orelse_len=len(node.orelse or []))
+                idx = graph.add_node(ASTWhile(
+                    body_len=len(node.body),
+                    orelse_len=len(node.orelse or [])
+                ))
                 test_idx = add(node.test, idx)
                 link(idx, test_idx)
                 for stmt in node.body:
@@ -342,7 +534,10 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.If):
-                idx = graph.add_node(ASTNodeType.IF, body_len=len(node.body), orelse_len=len(node.orelse or []))
+                idx = graph.add_node(ASTIf(
+                    body_len=len(node.body),
+                    orelse_len=len(node.orelse or [])
+                ))
                 test_idx = add(node.test, idx)
                 link(idx, test_idx)
                 for stmt in node.body:
@@ -356,19 +551,18 @@ class ASTSimplifier:
             # Variables and assignments
             if isinstance(node, ast.Name):
                 var_id = variable_to_id.get(node.id, 0)
-                idx = graph.add_node(
-                    ASTNodeType.VARIABLE,
+                idx = graph.add_node(ASTVariable(
                     name=node.id,
                     var_id=var_id,
                     ctx=type(node.ctx).__name__,
-                )
+                ))
                 # Link occurrence to its symbol node
                 if node.id in symbol_node_index:
                     graph.add_edge(idx, symbol_node_index[node.id], EdgeType.SYMBOL)
                 return idx
 
             if isinstance(node, ast.Assign):
-                idx = graph.add_node(ASTNodeType.ASSIGNMENT, num_targets=len(node.targets))
+                idx = graph.add_node(ASTAssignment(num_targets=len(node.targets)))
                 for tgt in node.targets:
                     t = add(tgt, idx)
                     link(idx, t)
@@ -378,7 +572,9 @@ class ASTSimplifier:
 
             if isinstance(node, ast.AugAssign):
                 aug_map: Dict[Any, str] = {ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=", ast.Mod: "%=", ast.Pow: "**="}
-                idx = graph.add_node(ASTNodeType.AUGMENTED_ASSIGNMENT, op=aug_map.get(type(node.op), type(node.op).__name__))
+                idx = graph.add_node(ASTAugmentedAssignment(
+                    op=aug_map.get(type(node.op), type(node.op).__name__)
+                ))
                 t = add(node.target, idx)
                 v = add(node.value, idx)
                 link(idx, t)
@@ -387,7 +583,9 @@ class ASTSimplifier:
 
             # Expressions
             if isinstance(node, ast.BinOp):
-                idx = graph.add_node(ASTNodeType.BINARY_OPERATION, op=binop_map.get(type(node.op), type(node.op).__name__))
+                idx = graph.add_node(ASTBinaryOperation(
+                    op=binop_map.get(type(node.op), type(node.op).__name__)
+                ))
                 l = add(node.left, idx)
                 r = add(node.right, idx)
                 link(idx, l)
@@ -395,7 +593,9 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.UnaryOp):
-                idx = graph.add_node(ASTNodeType.UNARY_OPERATION, op=unaryop_map.get(type(node.op), type(node.op).__name__))
+                idx = graph.add_node(ASTUnaryOperation(
+                    op=unaryop_map.get(type(node.op), type(node.op).__name__)
+                ))
                 o = add(node.operand, idx)
                 link(idx, o)
                 return idx
@@ -403,7 +603,7 @@ class ASTSimplifier:
             if isinstance(node, ast.Compare):
                 if len(node.ops) == 1 and len(node.comparators) == 1:
                     op_name = cmpop_map.get(type(node.ops[0]), type(node.ops[0]).__name__)
-                    idx = graph.add_node(ASTNodeType.COMPARISON, op=op_name)
+                    idx = graph.add_node(ASTComparison(op=op_name, ops=[op_name]))
                     l = add(node.left, idx)
                     r = add(node.comparators[0], idx)
                     link(idx, l)
@@ -411,7 +611,7 @@ class ASTSimplifier:
                     return idx
                 else:
                     ops = [cmpop_map.get(type(op), type(op).__name__) for op in node.ops]
-                    idx = graph.add_node(ASTNodeType.COMPARISON, ops=ops)
+                    idx = graph.add_node(ASTComparison(op="", ops=ops))
                     l = add(node.left, idx)
                     link(idx, l)
                     for comp in node.comparators:
@@ -421,7 +621,7 @@ class ASTSimplifier:
 
             if isinstance(node, ast.BoolOp):
                 op_name = boolop_map.get(type(node.op), type(node.op).__name__)
-                idx = graph.add_node(ASTNodeType.BOOLEAN_OPERATION, op=op_name)
+                idx = graph.add_node(ASTBooleanOperation(op=op_name))
                 for val in node.values:
                     v = add(val, idx)
                     link(idx, v)
@@ -429,7 +629,7 @@ class ASTSimplifier:
 
             if isinstance(node, ast.Call):
                 func_name: Optional[str] = node.func.id if isinstance(node.func, ast.Name) else None  # type: ignore[attr-defined]
-                idx = graph.add_node(ASTNodeType.FUNCTION_CALL, function=func_name)
+                idx = graph.add_node(ASTFunctionCall(function=func_name))
                 f = add(node.func, idx)
                 link(idx, f)
                 for arg in node.args:
@@ -440,20 +640,20 @@ class ASTSimplifier:
                     if kw.arg is None:
                         # Skip **kwargs for now
                         continue
-                    kw_idx = graph.add_node(ASTNodeType.KEYWORD_ARG, arg=kw.arg)
+                    kw_idx = graph.add_node(ASTKeywordArg(arg=kw.arg))
                     v = add(kw.value, kw_idx)
                     link(kw_idx, v)
                     link(idx, kw_idx)
                 return idx
 
             if isinstance(node, ast.Attribute):
-                idx = graph.add_node(ASTNodeType.ATTRIBUTE, attr=node.attr)
+                idx = graph.add_node(ASTAttribute(attr=node.attr))
                 v = add(node.value, idx)
                 link(idx, v)
                 return idx
 
             if isinstance(node, ast.Subscript):
-                idx = graph.add_node(ASTNodeType.SUBSCRIPT)
+                idx = graph.add_node(ASTSubscript())
                 v = add(node.value, idx)
                 s = add(node.slice, idx)
                 link(idx, v)
@@ -461,7 +661,7 @@ class ASTSimplifier:
                 return idx
 
             if isinstance(node, ast.Slice):
-                idx = graph.add_node(ASTNodeType.SLICE)
+                idx = graph.add_node(ASTSlice())
                 if node.lower is not None:
                     l = add(node.lower, idx)
                     link(idx, l)
@@ -476,33 +676,33 @@ class ASTSimplifier:
             if isinstance(node, ast.Constant):
                 val = node.value
                 if isinstance(val, bool):
-                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="bool", value=bool(val))
+                    idx = graph.add_node(ASTConstant(dtype="bool", value=bool(val)))
                 elif isinstance(val, int):
-                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="int", value=int(val))
+                    idx = graph.add_node(ASTConstant(dtype="int", value=int(val)))
                 elif isinstance(val, float):
-                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="float", value=float(val))
+                    idx = graph.add_node(ASTConstant(dtype="float", value=float(val)))
                 elif isinstance(val, str):
-                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype="str", value=str(val))
+                    idx = graph.add_node(ASTConstant(dtype="str", value=str(val)))
                 else:
-                    idx = graph.add_node(ASTNodeType.CONSTANT, dtype=type(val).__name__, value=str(val))
+                    idx = graph.add_node(ASTConstant(dtype=type(val).__name__, value=str(val)))
                 return idx
 
             if isinstance(node, ast.List):
-                idx = graph.add_node(ASTNodeType.LIST)
+                idx = graph.add_node(ASTList())
                 for elt in node.elts:
                     e = add(elt, idx)
                     link(idx, e)
                 return idx
 
             if isinstance(node, ast.Tuple):
-                idx = graph.add_node(ASTNodeType.TUPLE)
+                idx = graph.add_node(ASTTuple())
                 for elt in node.elts:
                     e = add(elt, idx)
                     link(idx, e)
                 return idx
 
             if isinstance(node, ast.Expr):
-                idx = graph.add_node(ASTNodeType.EXPRESSION)
+                idx = graph.add_node(ASTExpression())
                 v = add(node.value, idx)
                 link(idx, v)
                 return idx
@@ -510,11 +710,11 @@ class ASTSimplifier:
             # Nodes we intentionally skip or treat as no-ops (e.g., Pass, Break, Continue)
             if isinstance(node, (ast.Pass, ast.Break, ast.Continue)):
                 # Represent as an empty expression wrapper for simplicity
-                idx = graph.add_node(ASTNodeType.EXPRESSION)
+                idx = graph.add_node(ASTExpression())
                 return idx
 
             # Fallback: treat unhandled nodes as expression wrappers around their children
-            idx = graph.add_node(ASTNodeType.EXPRESSION)
+            idx = graph.add_node(ASTExpression())
             for child in ast.iter_child_nodes(node):
                 c = add(child, idx)
                 link(idx, c)

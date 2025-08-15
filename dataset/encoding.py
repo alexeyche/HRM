@@ -7,7 +7,10 @@ import ast as pyast
 import re
 import numpy as np
 
-from .ast import ASTNodeType, EdgeType
+from .ast import (
+    ASTNodeType, EdgeType, ASTNode, ASTNodeWithOp,
+    ASTComparison, ASTVariable, ASTFunctionCall, ASTAttribute, ASTConstant
+)
 
 # -----------------------------
 # Vocabularies
@@ -381,7 +384,7 @@ class GraphEncoder:
         }
 
     def encode(self, graph: Dict[str, Any]) -> EncodedGraph:
-        nodes: List[Dict[str, Any]] = graph["nodes"]
+        nodes: List[ASTNode] = graph["nodes"]
         edges: List[Tuple[int, int, EdgeType]] = graph["edges"]
         root: int = graph["root"]
 
@@ -411,7 +414,7 @@ class GraphEncoder:
         node_type_to_id: Dict[ASTNodeType, int] = {nt: i for i, nt in enumerate(ASTNodeType)}
 
         for i, n in enumerate(nodes):
-            ntype: ASTNodeType = n["type"]
+            ntype: ASTNodeType = n.type
             node_type_ids[i] = node_type_to_id[ntype]
 
             # position
@@ -422,36 +425,36 @@ class GraphEncoder:
             position[i] = [float(d), float(pre), float(sib)]
 
             if ntype in (ASTNodeType.BINARY_OPERATION, ASTNodeType.UNARY_OPERATION, ASTNodeType.BOOLEAN_OPERATION):
-                token = n.get("op")
-                op_ids[i] = self.op_vocab.to_id(token)
+                node_impl = n.cast(ASTNodeWithOp)
+                op_ids[i] = self.op_vocab.to_id(node_impl.op)
             elif ntype == ASTNodeType.COMPARISON:
-                token = n.get("op")
-                if token is not None:
-                    op_ids[i] = self.op_vocab.to_id(token)
-                else:
+                node_impl = n.cast(ASTComparison)
+                if node_impl.op is not None:
+                    op_ids[i] = self.op_vocab.to_id(node_impl.op)
+                elif node_impl.ops is not None and len(node_impl.ops) > 0:
                     # Multiple ops stored under 'ops'; keep the first as op_id for simplicity
-                    ops_list = n.get("ops", [])
-                    if ops_list:
-                        op_ids[i] = self.op_vocab.to_id(ops_list[0])
+                    op_ids[i] = self.op_vocab.to_id(node_impl.ops[0])
 
             if ntype == ASTNodeType.VARIABLE:
+                node_impl = n.cast(ASTVariable)
                 # var_id already canonicalized per-program
-                var_ids[i] = int(n.get("var_id", 0))
-                ctx = str(n.get("ctx", "<UNK>"))
+                var_ids[i] = int(node_impl.var_id)
+                ctx = str(node_impl.ctx)
                 ctx_ids[i] = self.ctx_to_id.get(ctx, self.ctx_to_id["<UNK>"])
 
             if ntype == ASTNodeType.FUNCTION_CALL:
-                fname = n.get("function")
-                fn_ids[i] = self.function_vocab.to_id(fname)
+                node_impl = n.cast(ASTFunctionCall)
+                fn_ids[i] = self.function_vocab.to_id(node_impl.function)
 
             if ntype == ASTNodeType.ATTRIBUTE:
-                attr = n.get("attr")
-                attr_ids[i] = self.attribute_vocab.to_id(attr)
+                node_impl = n.cast(ASTAttribute)
+                attr_ids[i] = self.attribute_vocab.to_id(node_impl.attr)
 
             if ntype == ASTNodeType.CONSTANT:
-                dtype = str(n.get("dtype", "<UNK>"))
+                node_impl = n.cast(ASTConstant)
+                dtype = str(node_impl.dtype)
                 dtype_ids[i] = self.dtype_to_id.get(dtype, self.dtype_to_id["<UNK>"])
-                val = n.get("value", None)
+                val = node_impl.value
                 if dtype == "int" and isinstance(val, int):
                     ex_id, feats = _int_features(val, self.small_int_vocab)
                     const_exact_ids[i] = ex_id if ex_id >= 0 else -1
@@ -479,10 +482,10 @@ class GraphEncoder:
                 for src, dst, et in edges:
                     if et == EdgeType.AST and src == i:
                         child = nodes[dst]
-                        if child.get("type") == ASTNodeType.CONSTANT and child.get("dtype") == "int":
-                            v = child.get("value")
-                            if isinstance(v, int):
-                                int_vals.append(v)
+                        if child.type == ASTNodeType.CONSTANT:
+                            const_node = child.cast(ASTConstant)
+                            if const_node.dtype == "int" and isinstance(const_node.value, int):
+                                int_vals.append(const_node.value)
                 first_ids, summary, mask = _list_int_features(int_vals, self.small_int_vocab, first_k=self.list_first_k)
                 for j, v in enumerate(first_ids):
                     list_firstk_ids[i][j] = int(v)
@@ -556,7 +559,6 @@ __all__ = [
     "to_torch_dict",
     "to_pyg_data",
     "collate_to_pyg_batch",
-    "NodeFeatureBuilder",
 ]
 
 
