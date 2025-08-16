@@ -54,6 +54,15 @@ class CFGNonTerminal(Enum):
     NEWLINE = "NEWLINE"
 
 
+    @classmethod
+    def find(cls, value: str) -> "CFGNonTerminal | None":
+        if value in cls.__members__:
+            return cls.__members__[value]
+        for non_terminal in cls:
+            if non_terminal.value == value:
+                return non_terminal
+        return None
+
 class CFGTerminal(Enum):
     """Terminal symbols (actual code tokens)"""
 
@@ -105,6 +114,17 @@ class CFGTerminal(Enum):
     SPACE = " "
     TAB = "\t"
     NEWLINE = "\n"
+
+    @classmethod
+    def find(cls, value: str) -> "CFGTerminal | None":
+        if value in cls.__members__:
+            return cls.__members__[value]
+
+        for terminal in cls:
+            if terminal.value == value:
+                return terminal
+
+        return None
 
 
 class CFGGrammar:
