@@ -5,6 +5,7 @@ from enum import Enum
 from collections import deque
 from dataset.cfg import CFGNonTerminal, CFGTerminal, CFGGrammar
 import logging
+from dataset.tokenizer import tokenize_code
 
 log = logging.getLogger(__name__)
 
@@ -33,20 +34,35 @@ class CFGParser:
     history: list[tuple[CFGNonTerminal, list[str]]] = []
     stack: deque[CFGTerminal | CFGNonTerminal | str] = deque()
     grammar: CFGGrammar = CFGGrammar()
-    # Track the current production being parsed
-    current_production: Optional[tuple[CFGNonTerminal, list[str], int]] = None
+    # Track stack of active productions being parsed
+    production_stack: list[tuple[CFGNonTerminal, list[str], int]] = []
+
+    error_messages: list[str] = []
 
     def __init__(self):
         self.reset()
 
-    def consume_token(self, token: ASTNode):
-        pass
+    def consume_token(self, token: CFGTerminal | str):
+        """Consume a token from the tokenizer"""
+        try:
+            self.advance(token)
+            return True
+        except ValueError as e:
+            self.error_messages.append(f"Failed to consume token {token}: {e}")
+            return False
+
+    def consume_tokens(self, tokens: list[CFGTerminal | str]) -> bool:
+        """Consume a list of tokens from the tokenizer"""
+        for token in tokens:
+            if not self.consume_token(token):
+                return False
+        return True
 
     def reset(self):
         """Reset parser to initial state with start symbol"""
         self.history.clear()
         self.stack.clear()
-        self.current_production = None
+        self.production_stack.clear()
         # Start with the start symbol of the grammar
         self.stack.append(CFGNonTerminal.PROGRAM)
 
@@ -123,18 +139,16 @@ class CFGParser:
                 if top == CFGTerminal.IDENTIFIER_LITERAL:
                     if token.isidentifier():
                         self.stack.pop()
-                        # Continue with the current production if we have one
-                        if self.current_production:
-                            self._continue_production()
+                        # Continue with active productions
+                        self._continue_productions()
                         return
                     else:
                         raise ValueError(f"Expected valid identifier, got {token}")
                 # Compare terminal value with string token
                 elif top.value == token:
                     self.stack.pop()
-                    # Continue with the current production if we have one
-                    if self.current_production:
-                        self._continue_production()
+                    # Continue with active productions
+                    self._continue_productions()
                     return
                 else:
                     raise ValueError(f"Expected {top.value}, got {token}")
@@ -142,9 +156,8 @@ class CFGParser:
                 # Compare terminal with terminal
                 if top == token:
                     self.stack.pop()
-                    # Continue with the current production if we have one
-                    if self.current_production:
-                        self._continue_production()
+                    # Continue with active productions
+                    self._continue_productions()
                     return
                 else:
                     raise ValueError(f"Expected {top}, got {token}")
@@ -163,9 +176,10 @@ class CFGParser:
                     log.debug(f"Production {rhs} matches token {token}")
                     # Record rule choice (for AST reconstruction)
                     self.history.append((top, rhs))
-                    # Set current production for tracking
-                    self.current_production = (top, rhs, 0)
-                    # Push RHS in reverse order (leftmost derivation)
+                    # Add production to stack for tracking
+                    self.production_stack.append((top, rhs, 0))
+                    # Remove the non-terminal from stack and push RHS in reverse order (leftmost derivation)
+                    self.stack.pop()
                     for sym in reversed(rhs):
                         resolved_sym = resolve_symbol(sym)
                         self.stack.append(resolved_sym)
@@ -176,6 +190,21 @@ class CFGParser:
                 else:
                     log.debug(f"Production {rhs} does not match token {token}")
 
+            # Check if we have an empty production that can be used
+            # This is a simple heuristic: if we can't find a matching production,
+            # and there's an empty production, try using it
+            for rhs in productions:
+                if not rhs:  # Empty production
+                    log.debug(f"Using empty production for {top}")
+                    # Record rule choice (for AST reconstruction)
+                    self.history.append((top, rhs))
+                    # Remove the non-terminal without adding anything
+                    self.stack.pop()
+                    # Continue with active productions since we consumed the non-terminal
+                    self._continue_productions()
+                    # Now try to advance again with the same token
+                    return self.advance(token)
+
             log.debug(f"No production found for {top} that can start with {token}")
             raise ValueError(f"Token {token} not valid for nonterminal {top}")
 
@@ -184,9 +213,8 @@ class CFGParser:
             if isinstance(token, str):
                 if top == token:
                     self.stack.pop()
-                    # Continue with the current production if we have one
-                    if self.current_production:
-                        self._continue_production()
+                    # Continue with active productions
+                    self._continue_productions()
                     return
                 else:
                     raise ValueError(f"Expected {top}, got {token}")
@@ -194,35 +222,37 @@ class CFGParser:
                 # Token is CFGTerminal, compare with string value
                 if top == token.value:
                     self.stack.pop()
-                    # Continue with the current production if we have one
-                    if self.current_production:
-                        self._continue_production()
+                    # Continue with active productions
+                    self._continue_productions()
                     return
                 else:
                     raise ValueError(f"Expected {top}, got {token.value}")
 
-    def _continue_production(self):
-        """Continue with the current production after consuming a terminal"""
-        if not self.current_production:
-            return
+    def _continue_productions(self):
+        """Continue with active productions after consuming a terminal"""
+        # Process production stack from top to bottom (most recent first)
+        for i in range(len(self.production_stack) - 1, -1, -1):
+            non_terminal, production, position = self.production_stack[i]
+            position += 1
 
-        non_terminal, production, position = self.current_production
-        position += 1
+            # If we've consumed all symbols in this production, mark it as complete
+            if position >= len(production):
+                # Remove completed production from stack
+                self.production_stack.pop(i)
+                continue
+            else:
+                # Update position in this production
+                self.production_stack[i] = (non_terminal, production, position)
 
-        # If we've consumed all symbols in the production, we're done
-        if position >= len(production):
-            self.current_production = None
-            return
+                # Get the next symbol in the production
+                next_symbol = production[position]
+                next_symbol_resolved = resolve_symbol(next_symbol)
 
-        # Update position
-        self.current_production = (non_terminal, production, position)
+                # Push the next symbol onto the stack
+                self.stack.append(next_symbol_resolved)
 
-        # Get the next symbol in the production
-        next_symbol = production[position]
-        next_symbol_resolved = resolve_symbol(next_symbol)
-
-        # Push the next symbol onto the stack
-        self.stack.append(next_symbol_resolved)
+                # Only continue with the most recent production that has remaining symbols
+                break
 
     def _can_start_with(self, production: list[str], token: CFGTerminal | str, visited: Optional[set] = None) -> bool:
         """Check if a production can start with the given token"""
@@ -287,6 +317,47 @@ class CFGParser:
 
         return False
 
+    def is_accepting(self) -> bool:
+        """Check if the parser is in an accepting state"""
+        return len(self.stack) == 0
+
+    def get_parse_tree(self) -> dict[str, Any]:
+        """Get the parse tree from the parser history"""
+        return {
+            **{
+                "history": self.history,
+                "production_stack": self.production_stack,
+                "stack": list(self.stack),
+            }, **({} if len(self.error_messages) == 0 else {"error_messages": self.error_messages})
+        }
+
+
 def validate_ast_syntax(ast_graph: dict[str, Any]) -> bool:
     """Validate the syntax of an AST graph"""
     return True
+
+
+def parse_code(code: str) -> tuple[bool, dict[str, Any]]:
+    """
+    Parse code using the CFG parser and tokenizer.
+
+    Args:
+        code: source code as string
+
+    Returns:
+        Tuple of (success, parse_info) where parse_info contains parser state
+    """
+
+    # Tokenize the code
+    tokens = tokenize_code(code)
+
+    # Create parser and consume tokens
+    parser = CFGParser()
+
+    try:
+        success = parser.consume_tokens(tokens)
+        parse_info = parser.get_parse_tree()
+        return success, parse_info
+    except Exception as e:
+        log.error(f"Parsing failed: {e}")
+        return False, {"error": str(e)}

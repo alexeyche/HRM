@@ -48,7 +48,7 @@ class Token:
         return False
 
 
-class PythonTokenizer:
+class Tokenizer:
     """Tokenizes Python source code into a sequence of tokens"""
 
     # Python keywords that map to CFG terminals
@@ -165,7 +165,7 @@ class PythonTokenizer:
             char = self.source[self.current_pos]
             if char == '\n':
                 # Handle newline
-                self.tokens.append(Token(TokenType.NEWLINE, '\n', self.line, self.column))
+                self.tokens.append(Token(TokenType.NEWLINE, CFGTerminal.NEWLINE, self.line, self.column))
                 self.line += 1
                 self.column = 1
                 self.current_pos += 1
@@ -183,7 +183,7 @@ class PythonTokenizer:
         if self.current_pos > start_pos and self.source[self.current_pos - 1] != '\n':
             whitespace = self.source[start_pos:self.current_pos]
             if whitespace:
-                self.tokens.append(Token(TokenType.WHITESPACE, whitespace, self.line, start_column))
+                self.tokens.append(Token(TokenType.WHITESPACE, CFGTerminal.SPACE, self.line, start_column))
 
     def _handle_indentation(self):
         """Handle indentation after a newline"""
@@ -205,9 +205,19 @@ class PythonTokenizer:
             current_indent = self.indent_stack[-1]
 
             if indent_level > current_indent:
-                # Indent
-                self.tokens.append(Token(TokenType.INDENT, '\t', self.line, start_column))
+                # Indent - produce individual space tokens to match CFG grammar
+                for _ in range(indent_level):
+                    self.tokens.append(Token(TokenType.INDENT, CFGTerminal.SPACE, self.line, start_column))
                 self.indent_stack.append(indent_level)
+
+                # Skip any additional whitespace that comes immediately after indentation
+                # This is not semantically meaningful for parsing
+                while (self.current_pos < len(self.source) and
+                       self.source[self.current_pos].isspace() and
+                       self.source[self.current_pos] != '\n'):
+                    self.current_pos += 1
+                    self.column += 1
+
             elif indent_level < current_indent:
                 # Dedent
                 while self.indent_stack and self.indent_stack[-1] > indent_level:
@@ -258,8 +268,8 @@ class PythonTokenizer:
                 # String keyword (like 'pass')
                 self.tokens.append(Token(TokenType.KEYWORD, keyword_value, self.line, start_column))
         else:
-            # Regular identifier
-            self.tokens.append(Token(TokenType.IDENTIFIER, identifier, self.line, start_column))
+            # Regular identifier - use CFGTerminal.IDENTIFIER_LITERAL
+            self.tokens.append(Token(TokenType.IDENTIFIER, CFGTerminal.IDENTIFIER_LITERAL, self.line, start_column))
 
     def _handle_number(self):
         """Handle numeric literals"""
@@ -330,8 +340,9 @@ class PythonTokenizer:
             self.current_pos += 1
             self.column += 1
 
-        string_content = self.source[start_column:self.current_pos]
-        self.tokens.append(Token(TokenType.STRING, string_content, self.line, start_column))
+        # Include the opening quote in the string content
+        string_content = self.source[start_column-1:self.current_pos]
+        self.tokens.append(Token(TokenType.STRING, string_content, self.line, start_column-1))
 
     def _handle_operator(self):
         """Handle operators"""
@@ -387,14 +398,14 @@ class PythonTokenizer:
                 # Skip comments
                 continue
             elif token.type == TokenType.WHITESPACE:
-                # Add whitespace as string
+                # Add whitespace as CFGTerminal.SPACE
                 cfg_tokens.append(token.value)
             elif token.type == TokenType.NEWLINE:
-                # Add newline as string
-                cfg_tokens.append('\n')
+                # Add newline as CFGTerminal.NEWLINE
+                cfg_tokens.append(token.value)
             elif token.type == TokenType.INDENT:
-                # Add indent as tab character
-                cfg_tokens.append('\t')
+                # Add indent as CFGTerminal.SPACE
+                cfg_tokens.append(token.value)
             elif token.type == TokenType.DEDENT:
                 # Skip dedent tokens for now
                 continue
@@ -402,7 +413,7 @@ class PythonTokenizer:
                 # Add keyword value (CFGTerminal or string)
                 cfg_tokens.append(token.value)
             elif token.type == TokenType.IDENTIFIER:
-                # Add identifier as string
+                # Add identifier as CFGTerminal.IDENTIFIER_LITERAL
                 cfg_tokens.append(token.value)
             elif token.type == TokenType.STRING:
                 # Add string as string
@@ -420,7 +431,7 @@ class PythonTokenizer:
         return cfg_tokens
 
 
-def tokenize_python_code(code: str) -> List[Union[CFGTerminal, str]]:
+def tokenize_code(code: str) -> List[Union[CFGTerminal, str]]:
     """
     Convenience function to tokenize Python code.
 
@@ -430,7 +441,7 @@ def tokenize_python_code(code: str) -> List[Union[CFGTerminal, str]]:
     Returns:
         List of tokens suitable for CFG parser
     """
-    tokenizer = PythonTokenizer()
+    tokenizer = Tokenizer()
     return tokenizer.tokenize(code)
 
 
@@ -441,7 +452,7 @@ def function_name():
     pass
 '''
 
-    tokens = tokenize_python_code(test_code)
+    tokens = tokenize_code(test_code)
     print("Tokens:")
     for i, token in enumerate(tokens):
         print(f"{i}: {token}")

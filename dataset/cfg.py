@@ -178,6 +178,7 @@ class CFGGrammar:
 
             # Statements (ordered by preference - first match wins)
             CFGNonTerminal.STATEMENT: [
+                ["pass"],  # Pass statement (must come before ASSIGNMENT to avoid conflict)
                 ["ASSIGNMENT"],
                 ["AUG_ASSIGNMENT"],
                 ["RETURN_STMT"],
@@ -252,7 +253,7 @@ class CFGGrammar:
 
             # Formatting
             CFGNonTerminal.INDENT: [
-                ["TAB"]
+                ["SPACE", "SPACE", "SPACE", "SPACE"]  # 4 spaces for indentation
             ],
 
             CFGNonTerminal.NEWLINE: [
