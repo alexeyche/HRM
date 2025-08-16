@@ -19,6 +19,7 @@ class CFGNonTerminal(Enum):
     FUNCTION = "FUNCTION"
     FUNCTION_HEADER = "FUNCTION_HEADER"
     FUNCTION_BODY = "FUNCTION_BODY"
+    PARAMETER_LIST = "PARAMETER_LIST"
     STATEMENT = "STATEMENT"
     STATEMENT_LIST = "STATEMENT_LIST"
 
@@ -115,6 +116,8 @@ class CFGTerminal(Enum):
     TAB = "\t"
     NEWLINE = "\n"
 
+    IDENTIFIER_LITERAL = "<alpha_numeric>"
+
     @classmethod
     def find(cls, value: str) -> "CFGTerminal | None":
         if value in cls.__members__:
@@ -150,7 +153,17 @@ class CFGGrammar:
             ],
 
             CFGNonTerminal.FUNCTION_HEADER: [
-                ["def", "SPACE", "IDENTIFIER", "LPAREN", "RPAREN", "COLON"]
+                ["def", "SPACE", "IDENTIFIER", "LPAREN", "PARAMETER_LIST", "RPAREN", "COLON"]
+            ],
+
+            CFGNonTerminal.IDENTIFIER: [
+                ["IDENTIFIER_LITERAL"]
+            ],
+
+            CFGNonTerminal.PARAMETER_LIST: [
+                [],  # Empty parameters
+                ["IDENTIFIER"],
+                ["IDENTIFIER", "COMMA", "PARAMETER_LIST"]
             ],
 
             CFGNonTerminal.FUNCTION_BODY: [
