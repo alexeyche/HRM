@@ -173,7 +173,9 @@ class Tokenizer:
                 # Handle indentation after newline
                 if self.current_pos < len(self.source):
                     self._handle_indentation()
-                break
+                # After handling a newline and indentation, we should not emit a
+                # generic whitespace token for this block. Return early.
+                return
             else:
                 # Regular whitespace
                 self.current_pos += 1

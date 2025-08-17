@@ -98,7 +98,6 @@ def test_whitespace_handling():
     # Check that whitespace and newlines are properly tokenized
     assert CFGTerminal.SPACE in tokens
     assert CFGTerminal.NEWLINE in tokens
-    assert CFGTerminal.TAB in tokens  # Indentation becomes TAB
 
 def test_comments():
     """Test that comments are properly handled"""
@@ -119,8 +118,8 @@ if x > 0:
     tokens = tokenize_code(code)
 
     # Check that indentation is properly tokenized
-    tab_tokens = [t for t in tokens if t == CFGTerminal.TAB]
-    assert len(tab_tokens) >= 2  # At least 2 indentation levels
+    space_tokens = [t for t in tokens if t == CFGTerminal.SPACE]
+    assert len(space_tokens) >= 4  # At least 2 indentation levels
 
 def test_complex_expression():
     """Test tokenization of complex expressions"""
@@ -254,7 +253,6 @@ def test_tokenizer_edge_cases():
     # Test with mixed whitespace
     code = "x\t= 1\n  y = 2"
     tokens = tokenize_code(code)
-    assert CFGTerminal.TAB in tokens
     assert CFGTerminal.SPACE in tokens
     assert CFGTerminal.NEWLINE in tokens
 

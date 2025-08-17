@@ -31,11 +31,13 @@ class CFGNonTerminal(Enum):
 
     # Expressions
     EXPRESSION = "EXPRESSION"
+    PRIMARY_EXPR = "PRIMARY_EXPR"
     BINARY_EXPR = "BINARY_EXPR"
     UNARY_EXPR = "UNARY_EXPR"
     COMPARISON_EXPR = "COMPARISON_EXPR"
     BOOLEAN_EXPR = "BOOLEAN_EXPR"
     CALL_EXPR = "CALL_EXPR"
+    ARGUMENT_LIST = "ARGUMENT_LIST"
 
     # Variables and assignments
     ASSIGNMENT = "ASSIGNMENT"
@@ -116,7 +118,11 @@ class CFGTerminal(Enum):
     TAB = "\t"
     NEWLINE = "\n"
 
+    # Literals
     IDENTIFIER_LITERAL = "<alpha_numeric>"
+    NUMBER = "<number>"
+    STRING = "<string>"
+    BOOLEAN = "<boolean>"
 
     @classmethod
     def find(cls, value: str) -> "CFGTerminal | None":
@@ -214,41 +220,60 @@ class CFGGrammar:
                 ["IDENTIFIER", "SPACE", "OPERATOR", "SPACE", "EXPRESSION"]
             ],
 
-            # Expressions (ordered by preference)
+            # Expressions (eliminate left recursion by putting base cases first)
             CFGNonTerminal.EXPRESSION: [
+                ["CALL_EXPR"],
+                ["VARIABLE"],
+                ["CONSTANT"],
                 ["BINARY_EXPR"],
                 ["COMPARISON_EXPR"],
                 ["BOOLEAN_EXPR"],
-                ["UNARY_EXPR"],
-                ["CALL_EXPR"],
-                ["VARIABLE"],
-                ["CONSTANT"]
+                ["UNARY_EXPR"]
             ],
 
             CFGNonTerminal.BINARY_EXPR: [
-                ["EXPRESSION", "SPACE", "OPERATOR", "SPACE", "EXPRESSION"]
+                ["PRIMARY_EXPR", "SPACE", "OPERATOR", "SPACE", "EXPRESSION"]
             ],
 
             CFGNonTerminal.UNARY_EXPR: [
-                ["OPERATOR", "EXPRESSION"]
+                ["OPERATOR", "PRIMARY_EXPR"]
             ],
 
             CFGNonTerminal.COMPARISON_EXPR: [
-                ["EXPRESSION", "SPACE", "OPERATOR", "SPACE", "EXPRESSION"]
+                ["PRIMARY_EXPR", "SPACE", "OPERATOR", "SPACE", "EXPRESSION"]
             ],
 
             CFGNonTerminal.BOOLEAN_EXPR: [
-                ["EXPRESSION", "SPACE", "OPERATOR", "SPACE", "EXPRESSION"]
+                ["PRIMARY_EXPR", "SPACE", "OPERATOR", "SPACE", "EXPRESSION"]
+            ],
+
+            # Primary expressions (base cases - no recursion)
+            CFGNonTerminal.PRIMARY_EXPR: [
+                ["VARIABLE"],
+                ["CONSTANT"],
+                ["CALL_EXPR"],
+                ["LPAREN", "EXPRESSION", "RPAREN"]  # Parenthesized expressions
             ],
 
             CFGNonTerminal.CALL_EXPR: [
-                ["IDENTIFIER", "LPAREN", "EXPRESSION", "RPAREN"],
+                ["IDENTIFIER", "LPAREN", "ARGUMENT_LIST", "RPAREN"],
                 ["IDENTIFIER", "LPAREN", "RPAREN"]
+            ],
+
+            CFGNonTerminal.ARGUMENT_LIST: [
+                ["EXPRESSION", "COMMA", "SPACE", "ARGUMENT_LIST"],
+                ["EXPRESSION"]
             ],
 
             # Terminals and variables
             CFGNonTerminal.VARIABLE: [
                 ["IDENTIFIER"]
+            ],
+
+            CFGNonTerminal.CONSTANT: [
+                ["NUMBER"],
+                ["STRING"],
+                ["BOOLEAN"]
             ],
 
             # Formatting

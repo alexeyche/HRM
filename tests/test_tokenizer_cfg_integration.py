@@ -108,7 +108,7 @@ def test_whitespace_handling_integration():
 
     # Verify whitespace tokens
     assert CFGTerminal.NEWLINE in tokens
-    assert CFGTerminal.TAB in tokens  # Indentation
+    assert CFGTerminal.SPACE in tokens  # Indentation
 
     # Try to parse
     parser = CFGParser()

@@ -7,9 +7,8 @@ from dataset.programs import get_program_registry
 from dataset.tokenizer import tokenize_code
 from pprint import pprint, pformat
 
-# Set up logging to see debug output
-logging.basicConfig(level=logging.DEBUG)
 
+log = logging.getLogger(__name__)
 
 
 def test_cfg_parser():
@@ -261,13 +260,16 @@ def test_working_parsing_example():
     print("   This shows the parser can handle basic expansion correctly")
     print("   The issue is with production continuation, not basic parsing")
 
-
+#   def program(n):
+#       return sum(range(1, n + 1))
 
 def test_cfg_parser_on_dataset():
     registry = get_program_registry()
     for _, spec in registry.programs.items():
         code = spec.implementation
         tokens = tokenize_code(code)
+        log.debug(f"Code: \n{code}\n============")
+        log.debug(f"Tokens: {pformat(tokens)}")
         parser = CFGParser()
         success = parser.consume_tokens(tokens)
         parse_info = parser.get_parse_tree()
