@@ -60,7 +60,26 @@ class CFGTokenValidator:
         if isinstance(top, CFGTerminal):
             return self._get_terminal_tokens(top)
         elif isinstance(top, CFGNonTerminal):
-            return self._get_nonterminal_first_tokens(top, state.context_stack)
+            first_tokens = self._get_nonterminal_first_tokens(top, state.context_stack)
+
+            # If the non-terminal can derive epsilon, also include what can follow it
+            if "<EPSILON>" in first_tokens:
+                first_tokens.remove("<EPSILON>")  # Remove epsilon marker
+                # Look at what's next on the stack
+                if len(state.syntax_stack) > 1:
+                    # Get tokens for the next symbol on the stack
+                    next_symbol = state.syntax_stack[-2]
+                    if isinstance(next_symbol, CFGTerminal):
+                        first_tokens.update(self._get_terminal_tokens(next_symbol))
+                    elif isinstance(next_symbol, CFGNonTerminal):
+                        first_tokens.update(self._get_nonterminal_first_tokens(next_symbol, state.context_stack))
+                    else:
+                        first_tokens.add(next_symbol)  # String literal
+                else:
+                    # Nothing follows, so we can end
+                    first_tokens.add("<END>")
+
+            return first_tokens
         else:
             return {top}  # String literal
 
@@ -109,12 +128,16 @@ class CFGTokenValidator:
             elif isinstance(top, CFGNonTerminal):
                 # Expand non-terminal using prediction table
                 production = self._select_production(top, token, new_context)
-                if production:
-                    new_context.append(f"{top.value}→{' '.join(production)}")
-                    # Push production symbols in reverse order for leftmost derivation
-                    for symbol in reversed(production):
-                        resolved = resolve_symbol(symbol)
-                        new_stack.append(resolved)
+                if production is not None:  # production can be empty list
+                    if production:  # Non-empty production
+                        new_context.append(f"{top.value}→{' '.join(production)}")
+                        # Push production symbols in reverse order for leftmost derivation
+                        for symbol in reversed(production):
+                            resolved = resolve_symbol(symbol)
+                            new_stack.append(resolved)
+                    else:  # Empty production (epsilon)
+                        new_context.append(f"{top.value}→ε")
+                        # Don't push anything for empty production
                 else:
                     raise ValueError(f"No valid production for {top} with token {token}")
 
@@ -241,15 +264,18 @@ class CFGTokenValidator:
             if self._production_valid_in_context(production, context):
                 return production
 
-        # Fallback: find any production that can start with this token
+        # Check if any non-empty production can start with this token
         for production in self.grammar.get_productions(non_terminal):
-            if (self._production_can_start_with_token(production, token) and
+            if (production and  # Non-empty production
+                self._production_can_start_with_token(production, token) and
                 self._production_valid_in_context(production, context)):
                 return production
 
-        # Last resort: empty production if available
+        # Check if there's an empty production and the token can follow this non-terminal
         for production in self.grammar.get_productions(non_terminal):
             if not production:  # Empty production
+                # For now, allow empty production as fallback
+                # TODO: Should check if token is in FOLLOW set of non_terminal
                 return production
 
         return None
@@ -402,8 +428,10 @@ class CFGTokenValidator:
                 first_set.update(["+", "-", "*", "/", "%", "**", "==", "!=", "<", ">", "<=", ">=", "and", "or", "not"])
             return first_set
 
+        has_empty_production = False
         for production in productions:
             if not production:  # Empty production
+                has_empty_production = True
                 continue
 
             first_symbol = production[0]
@@ -425,6 +453,10 @@ class CFGTokenValidator:
                 first_set.update(self._compute_first_set(first_symbol_resolved, visited.copy()))
             elif isinstance(first_symbol_resolved, str):
                 first_set.add(first_symbol_resolved)
+
+        # If there's an empty production, we need to include FOLLOW set
+        if has_empty_production:
+            first_set.add("<EPSILON>")  # Mark that epsilon is in FIRST set
 
         return first_set
 
