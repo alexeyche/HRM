@@ -10,7 +10,8 @@ from nltk.parse.generate import generate
 from typing import Set
 
 
-def get_cfg() -> CFG:
+def get_token_patterns() -> Dict[str, List[str]]:
+    """Get token patterns from the grammar for use by the tokenizer."""
     variables = [chr(c) for c in range(ord('a'), ord('z') + 1)]
     digits = [str(i) for i in range(0, 21)]
 
@@ -37,7 +38,7 @@ def get_cfg() -> CFG:
 
         # operators
         "ADDOP": ["+", "-"],
-        "MULOP": ["*", "/"],
+        "MULOP": ["*", "/", "%"],
         "BINARY_CMP": ["<", ">", "<=", ">=", "==", "!="],
         "AND": ["and"],
         "OR": ["or"],
@@ -51,6 +52,13 @@ def get_cfg() -> CFG:
         "BREAK": ["break"],
         "CONTINUE": ["continue"],
     }
+
+    return terminal_rules
+
+
+def get_cfg() -> CFG:
+    # Use shared token patterns
+    terminal_rules = get_token_patterns()
 
     non_terminal_rules = {
         # Start
@@ -317,7 +325,7 @@ def generate_random(
     return result
 
 
-def parse_program(program: str) -> bool:
+def parse_program_with_ast(program: str) -> bool:
     try:
         ast.parse(program)
         return True
@@ -330,6 +338,7 @@ def sample_programs(grammar: CFG, n: int = 100, **kwargs) -> List[str]:
 
 __all__ = [
     "get_cfg",
+    "get_token_patterns",
     "realize_program",
     "sample_programs",
 ]

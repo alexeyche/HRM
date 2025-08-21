@@ -2,7 +2,7 @@ import argparse
 import random
 from typing import List
 
-from dataset.grammar import sample_programs, parse_program, get_cfg
+from dataset.grammar import sample_programs, parse_program_with_ast, get_cfg
 
 
 def main():
@@ -16,7 +16,7 @@ def main():
     programs: List[str] = sample_programs(cfg, args.n, max_depth=args.max_depth, seed=args.seed)
 
     for i, program in enumerate(programs, start=1):
-        status = "✅" if parse_program(program) else "❌"
+        status = "✅" if parse_program_with_ast(program) else "❌"
         print(f"===== Program {i}, compiled: {status} =====")
         print(program)
         print()

@@ -350,10 +350,10 @@ def create_default_registry() -> ProgramRegistry:
         implementation="""def program(n):
     if n <= 1:
         return 1
-    result = 1
+    r = 1
     for i in range(1, n + 1):
-        result *= i
-    return result"""
+        r *= i
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -684,8 +684,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 0, 0]], output=0),
             Example(input=[[42]], output=42)
         ],
-        implementation="""def program(arr):
-    return sum(arr)"""
+        implementation="""def program(a):
+    return sum(a)"""
     ))
 
     registry.register(ProgramSpecification(
@@ -704,8 +704,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 0, 1]], output=1),
             Example(input=[[7, 3, 7, 1]], output=7)
         ],
-        implementation="""def program(arr):
-    return max(arr)"""
+        implementation="""def program(a):
+    return max(a)"""
     ))
 
     registry.register(ProgramSpecification(
@@ -724,8 +724,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 0, -1]], output=-1),
             Example(input=[[7, 3, 7, 1]], output=1)
         ],
-        implementation="""def program(arr):
-    return min(arr)"""
+        implementation="""def program(a):
+    return min(a)"""
     ))
 
     registry.register(ProgramSpecification(
@@ -744,8 +744,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[1, 2, 3, 4, 5]], output=5),
             Example(input=[[-1, 0, 1, 2]], output=4)
         ],
-        implementation="""def program(arr):
-    return len(arr)"""
+        implementation="""def program(a):
+    return len(a)"""
     ))
 
     registry.register(ProgramSpecification(
@@ -764,11 +764,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[]], output=[]),
             Example(input=[[1, 2, 3, 4]], output=[4, 3, 2, 1])
         ],
-        implementation="""def program(arr):
-    result = []
-    for i in range(len(arr) - 1, -1, -1):
-        result.append(arr[i])
-    return result"""
+        implementation="""def program(a):
+    r = []
+    for i in range(len(a) - 1, -1, -1):
+        r.append(a[i])
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -814,8 +814,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 1, 2]], output=0),
             Example(input=[[100, 200]], output=100)
         ],
-        implementation="""def program(arr):
-    return arr[0]"""
+        implementation="""def program(a):
+    return a[0]"""
     ))
 
     registry.register(ProgramSpecification(
@@ -834,8 +834,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 1, 2]], output=2),
             Example(input=[[100, 200]], output=200)
         ],
-        implementation="""def program(arr):
-    return arr[-1]"""
+        implementation="""def program(a):
+    return a[-1]"""
     ))
 
     registry.register(ProgramSpecification(
@@ -854,11 +854,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 1, 2]], output=0),
             Example(input=[[1, 1, 1, 1]], output=1)
         ],
-        implementation="""def program(arr):
-    result = 1
-    for num in arr:
-        result *= num
-    return result"""
+        implementation="""def program(a):
+    r = 1
+    for num in a:
+        r *= num
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -877,12 +877,12 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[42]], output=1),
             Example(input=[[0, 0, 0]], output=0)
         ],
-        implementation="""def program(arr):
-    count = 0
-    for x in arr:
+        implementation="""def program(a):
+    c = 0
+    for x in a:
         if x > 0:
-            count += 1
-    return count"""
+            c += 1
+    return c"""
     ))
 
     registry.register(ProgramSpecification(
@@ -901,12 +901,12 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, 1, 2]], output=2),
             Example(input=[[-2, -1, 0]], output=2)
         ],
-        implementation="""def program(arr):
-    count = 0
-    for x in arr:
+        implementation="""def program(a):
+    c = 0
+    for x in a:
         if x % 2 == 0:
-            count += 1
-    return count"""
+            c += 1
+    return c"""
     ))
 
     registry.register(ProgramSpecification(
@@ -925,9 +925,9 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[-5, -2, -10]], output=-5),
             Example(input=[[100, 50]], output=50)
         ],
-        implementation="""def program(arr):
-    sorted_arr = sorted(arr, reverse=True)
-    return sorted_arr[1]"""
+        implementation="""def program(a):
+    b = sorted(a, reverse=True)
+    return b[1]"""
     ))
 
     registry.register(ProgramSpecification(
@@ -946,8 +946,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[-5, -2, -10]], output=8),
             Example(input=[[42]], output=0)
         ],
-        implementation="""def program(arr):
-    return max(arr) - min(arr)"""
+        implementation="""def program(a):
+    return max(a) - min(a)"""
     ))
 
     registry.register(ProgramSpecification(
@@ -966,13 +966,13 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[1, 1, 1]], output=1),
             Example(input=[[42]], output=42)
         ],
-        implementation="""def program(arr):
-    sorted_arr = sorted(arr)
-    n = len(sorted_arr)
+        implementation="""def program(a):
+    s = sorted(a)
+    n = len(s)
     if n % 2 == 0:
-        return (sorted_arr[n//2 - 1] + sorted_arr[n//2]) // 2
+        return (s[n//2 - 1] + s[n//2]) // 2
     else:
-        return sorted_arr[n//2]"""
+        return s[n//2]"""
     ))
 
     registry.register(ProgramSpecification(
@@ -991,8 +991,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[1, 2, 1, 2]], output=2),
             Example(input=[[42]], output=1)
         ],
-        implementation="""def program(arr):
-    return len(set(arr))"""
+        implementation="""def program(a):
+    return len(set(a))"""
     ))
 
     # String Operations
@@ -1056,10 +1056,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    result = ""
+    r = ""
     for c in s:
-        result += c.upper()
-    return result"""
+        r += c.upper()
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1079,10 +1079,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    result = ""
+    r = ""
     for c in s:
-        result += c.lower()
-    return result"""
+        r += c.lower()
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1102,12 +1102,12 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="a", output=1)
         ],
         implementation="""def program(s):
-    vowels = 'aeiouAEIOU'
-    count = 0
-    for c in s:
-        if c in vowels:
-            count += 1
-    return count"""
+    v = 'aeiouAEIOU'
+    c = 0
+    for x in s:
+        if x in v:
+            c += 1
+    return c"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1127,10 +1127,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="anna", output=True)
         ],
         implementation="""def program(s):
-    reversed_s = ""
+    r = ""
     for i in range(len(s)-1, -1, -1):
-        reversed_s += s[i]
-    return s == reversed_s"""
+        r += s[i]
+    return s == r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1156,8 +1156,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=["python", ""], output="python"),
             Example(input=["123", "456"], output="123456")
         ],
-        implementation="""def program(s1, s2):
-    return s1 + s2"""
+        implementation="""def program(a, b):
+    return a + b"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1461,10 +1461,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=10, output=1)
         ],
         implementation="""def program(n):
-    sum = 0
-    for digit in str(abs(n)):
-        sum += int(digit)
-    return sum"""
+    s = 0
+    for d in str(abs(n)):
+        s += int(d)
+    return s"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1506,8 +1506,8 @@ def create_default_registry() -> ProgramRegistry:
         implementation="""def program(n):
     if n < 0:
         return False
-    root = int(n**0.5)
-    return root * root == n"""
+    r = int(n**0.5)
+    return r * r == n"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1533,13 +1533,13 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[3, 6], output=0),
             Example(input=[6, 13], output=5)
         ],
-        implementation="""def program(n, mod):
+        implementation="""def program(n, m):
     if n <= 1:
         return 1
-    result = 1
+    r = 1
     for i in range(1, n + 1):
-        result = (result * i) % mod
-    return result"""
+        r = (r * i) % m
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1570,17 +1570,17 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[2, 0, 7], output=1),
             Example(input=[4, 3, 13], output=12)
         ],
-        implementation="""def program(base, exp, mod):
-    if exp == 0:
+        implementation="""def program(b, e, m):
+    if e == 0:
         return 1
-    result = 1
-    base = base % mod
-    while exp > 0:
-        if exp % 2 == 1:
-            result = (result * base) % mod
-        exp = exp // 2
-        base = (base * base) % mod
-    return result"""
+    r = 1
+    b = b % m
+    while e > 0:
+        if e % 2 == 1:
+            r = (r * b) % m
+        e = e // 2
+        b = (b * b) % m
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1600,11 +1600,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=25, output=3)
         ],
         implementation="""def program(n):
-    count = 0
+    c = 0
     for i in range(1, n + 1):
         if n % i == 0:
-            count += 1
-    return count"""
+            c += 1
+    return c"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1624,14 +1624,14 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=16, output=4)
         ],
         implementation="""def program(n):
-    steps = 0
+    s = 0
     while n != 1:
         if n % 2 == 0:
             n = n // 2
         else:
             n = 3 * n + 1
-        steps += 1
-    return steps"""
+        s += 1
+    return s"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1651,10 +1651,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=2, output=5)
         ],
         implementation="""def program(n):
-    sum = 0
+    s = 0
     for i in range(1, n + 1):
-        sum += i * i
-    return sum"""
+        s += i * i
+    return s"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1685,10 +1685,10 @@ def create_default_registry() -> ProgramRegistry:
         return 0
     if k == 0 or k == n:
         return 1
-    result = 1
+    r = 1
     for i in range(k):
-        result = result * (n - i) // (i + 1)
-    return result"""
+        r = r * (n - i) // (i + 1)
+    return r"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1743,11 +1743,11 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=16, output=31)
         ],
         implementation="""def program(n):
-    total = 0
+    s = 0
     for i in range(1, n + 1):
         if n % i == 0:
-            total += i
-    return total"""
+            s += i
+    return s"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1769,10 +1769,10 @@ def create_default_registry() -> ProgramRegistry:
         implementation="""def program(n):
     if n == 0:
         return 0
-    product = 1
-    for digit in str(abs(n)):
-        product *= int(digit)
-    return product"""
+    p = 1
+    for d in str(abs(n)):
+        p *= int(d)
+    return p"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1794,11 +1794,11 @@ def create_default_registry() -> ProgramRegistry:
         implementation="""def program(n):
     if n <= 1:
         return False
-    total = 0
+    s = 0
     for i in range(1, n):
         if n % i == 0:
-            total += i
-    return total == n"""
+            s += i
+    return s == n"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1818,10 +1818,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=10, output=1)
         ],
         implementation="""def program(n):
-    max_digit = 0
-    for digit in str(abs(n)):
-        max_digit = max(max_digit, int(digit))
-    return max_digit"""
+    m = 0
+    for d in str(abs(n)):
+        m = max(m, int(d))
+    return m"""
     ))
 
     # Comparison Operations
@@ -1973,8 +1973,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[1, 2, 3], output="i")
         ],
         implementation="""def program(a, b, c):
-    sides = sorted([a, b, c])
-    if sides[0] + sides[1] <= sides[2]:
+    s = sorted([a, b, c])
+    if s[0] + s[1] <= s[2]:
         return 'i'
     elif a == b and b == c:
         return 'e'
@@ -2002,12 +2002,12 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=1900, output=False),
             Example(input=1600, output=True)
         ],
-        implementation="""def program(year):
-    if year % 4 != 0:
+        implementation="""def program(y):
+    if y % 4 != 0:
         return False
-    elif year % 100 != 0:
+    elif y % 100 != 0:
         return True
-    elif year % 400 != 0:
+    elif y % 400 != 0:
         return False
     else:
         return True"""
@@ -2097,10 +2097,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=["a", "b"], output=-1),
             Example(input=["z", "a"], output=1)
         ],
-        implementation="""def program(s1, s2):
-    if s1 < s2:
+        implementation="""def program(x, y):
+    if x < y:
         return -1
-    elif s1 > s2:
+    elif x > y:
         return 1
     else:
         return 0"""
@@ -2122,12 +2122,12 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=12, output=3),
             Example(input=1, output=3)
         ],
-        implementation="""def program(month):
-    if month in [12, 1, 2]:
+        implementation="""def program(m):
+    if m in [12, 1, 2]:
         return 3
-    elif month in [3, 4, 5]:
+    elif m in [3, 4, 5]:
         return 0
-    elif month in [6, 7, 8]:
+    elif m in [6, 7, 8]:
         return 1
     else:
         return 2"""
