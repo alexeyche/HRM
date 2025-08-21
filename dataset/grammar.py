@@ -1,207 +1,214 @@
 from __future__ import annotations
 
+import ast
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import random
 from nltk import CFG, Nonterminal
 from nltk.parse.generate import generate
 
-
-def _quote(token: str) -> str:
-    """Quote a terminal token for NLTK grammar text."""
-    # Escape single quotes inside tokens, then wrap in single quotes
-    return "'" + token.replace("'", "\\'") + "'"
-
-
-def _make_lexical_rule(lhs: str, terminals: Sequence[str]) -> str:
-    """Create a single grammar line for lexical productions.
-
-    Example: A -> 'a' | 'b' | 'c'
-    """
-    if not terminals:
-        return f"{lhs} ->"  # empty alternative (epsilon)
-    rhs = " | ".join(_quote(t) for t in terminals)
-    return f"{lhs} -> {rhs}"
+from typing import Set
 
 
 def get_cfg() -> CFG:
-    """Build and return the NLTK CFG equivalent of `dataset/code_generator.py` grammar.
-
-    Notes:
-    - We preserve explicit formatting tokens as terminals: SPACE, NEW_LINE, TAB_INDENT.
-    - Whitespace is realized later by `realize_program`.
-    - Semantic constraints from the original generator (like consistent loop bounds) are
-      intentionally omitted because plain CFGs cannot encode them.
-    """
-
     variables = [chr(c) for c in range(ord('a'), ord('z') + 1)]
-    # Keep DIGIT domain modest for tractability, while allowing multi-digit terminals like original.
     digits = [str(i) for i in range(0, 21)]
 
-    lines: List[str] = []
+    terminal_rules = {
+        "VARIABLE": variables,
+        "DIGIT": digits,
 
-    # Formatting tokens
-    lines.append(_make_lexical_rule("NEW_LINE", ["NEW_LINE"]))
-    lines.append(_make_lexical_rule("TAB_INDENT", ["TAB_INDENT"]))
-    lines.append(_make_lexical_rule("BRACKET_OPEN", ["("]))
-    lines.append(_make_lexical_rule("BRACKET_CLOSE", [")"]))
-    lines.append(_make_lexical_rule("EQUALS", ["="]))
-    lines.append(_make_lexical_rule("COLON", [":"]))
-    lines.append(_make_lexical_rule("COMMA", [","]))
-    # SPACE is a literal token to be realized later
-    lines.append(_make_lexical_rule("SPACE", ["SPACE"]))
+        # keywords
+        "DEF": ["def"],
+        "PROGRAM_NAME": ["program"],
+        "RETURN": ["return"],
+        "IF": ["if"],
+        "ELSE": ["else"],
 
-    # Keywords
-    lines.append(_make_lexical_rule("IF", ["if"]))
-    lines.append(_make_lexical_rule("ELIF", ["elif"]))
-    lines.append(_make_lexical_rule("ELSE", ["else"]))
-    lines.append(_make_lexical_rule("FOR", ["for"]))
-    lines.append(_make_lexical_rule("IN", ["in"]))
-    lines.append(_make_lexical_rule("RANGE", ["range"]))
-    lines.append(_make_lexical_rule("WHILE", ["while"]))
-    lines.append(_make_lexical_rule("PRINT", ["print"]))
+        # syntax
+        "LPAREN": ["("],
+        "RPAREN": [")"],
+        "COMMA": [","],
+        "COLON": [":"],
+        "EQUALS": ["="],
+        "NEWLINE": ["<NEWLINE>"],
+        "INDENT": ["<INDENT>"],
+        "DEDENT": ["<DEDENT>"],
 
-    # Lexical categories
-    lines.append(_make_lexical_rule("VARIABLE", variables))
-    lines.append(_make_lexical_rule("DIGIT", digits))
-    lines.append(_make_lexical_rule("ARITHMETIC_OPERATOR", ["+", "-", "*", "/"]))
-    lines.append(_make_lexical_rule("RELATIONAL_OPERATOR", ["<", ">", "<=", ">=", "!=", "=="]))
-    lines.append(_make_lexical_rule("LOGICAL_OPERATOR_INFIX", ["and", "or"]))
-    lines.append(_make_lexical_rule("LOGICAL_OPERATOR_PREFIX", ["not"]))
+        # operators
+        "ADDOP": ["+", "-"],
+        "MULOP": ["*", "/"],
+        "BINARY_CMP": ["<", ">", "<=", ">=", "==", "!="],
+        "AND": ["and"],
+        "OR": ["or"],
+        "NOT": ["not"],
+    }
 
-    # Non-lexical glue
-    lines += [
-        # Operators
-        "OPERATOR -> ARITHMETIC_OPERATOR",
+    non_terminal_rules = {
+        # Start
+        "S": ["FUNC_DEF"],
 
-        # Terms and expressions
-        "TERM -> EXPRESSION_IDENTIFIER | DIGIT",
-        "EXPRESSION_IDENTIFIER -> VARIABLE | DIGIT",
-        "EXPRESSION -> TERM SPACE OPERATOR SPACE TERM",
-        "ENCLOSED_EXPRESSION -> BRACKET_OPEN SPACE_OPT EXPRESSION SPACE_OPT BRACKET_CLOSE",
-        # Display expressions
-        "DISPLAY_EXPRESSION -> EXPRESSION_IDENTIFIER SPACE OPERATOR SPACE EXPRESSION_IDENTIFIER"
-        " | EXPRESSION_IDENTIFIER SPACE OPERATOR SPACE DIGIT",
+        # Function definition
+        "FUNC_DEF": ["DEF PROGRAM_NAME LPAREN PARAMS RPAREN COLON NEWLINE INDENT BODY DEDENT"],
 
-        # Optional space nonterminal (helps with slightly nicer layouts)
-        "SPACE_OPT -> SPACE |",  # epsilon
+        # Parameters
+        "PARAMS": ["VARIABLE", "VARIABLE COMMA PARAMS"],
 
-        # Initializations and assignments
-        "IDENTIFIER_INITIALIZATION -> IDENTIFIER_INITIALIZATION INITIALIZATION | INITIALIZATION",
-        "INITIALIZATION -> VARIABLE SPACE EQUALS SPACE DIGIT NEW_LINE",
-        "SIMPLE_ASSIGNMENTS -> VARIABLE SPACE EQUALS SPACE EXPRESSION NEW_LINE |",  # epsilon
-        "ADVANCED_ASSIGNMENTS -> VARIABLE SPACE EQUALS SPACE SIMPLE_ARITHMETIC_EVALUATION NEW_LINE"
-        " | VARIABLE SPACE EQUALS SPACE EXPRESSION NEW_LINE |",  # epsilon
-        "SIMPLE_ARITHMETIC_EVALUATION -> SIMPLE_ARITHMETIC_EVALUATION ARITHMETIC_OPERATOR ENCLOSED_EXPRESSION"
-        " | ENCLOSED_EXPRESSION",
+        # Function body: either a statement or an if-block
+        "BODY": ["STMT", "IF_BLOCK", "ASSIGNMENT"],
 
-        # Conditions
-        "SIMPLE_IF_STATEMENT -> IF SPACE CONDITION SPACE COLON NEW_LINE",
-        "ADVANCED_IF_STATEMENT -> IF SPACE CHAIN_CONDITION SPACE COLON NEW_LINE",
-        "SIMPLE_ELIF_STATEMENT -> ELIF SPACE CONDITION SPACE COLON NEW_LINE",
-        "ADVANCED_ELIF_STATEMENT -> ELIF SPACE CHAIN_CONDITION SPACE COLON NEW_LINE",
-        "ELSE_STATEMENT -> ELSE SPACE COLON NEW_LINE",
-        "CHAIN_CONDITION -> CHAIN_CONDITION SPACE LOGICAL_OPERATOR_INFIX SPACE ENCLOSED_CONDITION"
-        " | LOGICAL_OPERATOR_PREFIX SPACE ENCLOSED_CONDITION | ENCLOSED_CONDITION",
-        "ENCLOSED_CONDITION -> BRACKET_OPEN CONDITION BRACKET_CLOSE",
-        "CONDITION -> OPTIONAL_NOT CONDITION_EXPRESSION | CONDITION_EXPRESSION",
-        "CONDITION_EXPRESSION -> EXPRESSION_IDENTIFIER SPACE RELATIONAL_OPERATOR SPACE EXPRESSION_IDENTIFIER"
-        " | EXPRESSION_IDENTIFIER SPACE RELATIONAL_OPERATOR SPACE DIGIT",
-        "OPTIONAL_NOT -> LOGICAL_OPERATOR_PREFIX SPACE | SPACE",
+        # Assignment and return
+        "ASSIGNMENT": ["VARIABLE EQUALS EXPR NEWLINE"],
+        "STMT": ["RETURN EXPR NEWLINE"],
 
-        # Loops (For)
-        "FOR_HEADER -> FOR SPACE EXPRESSION_IDENTIFIER SPACE IN SPACE RANGE BRACKET_OPEN INITIAL COMMA SPACE FINAL COMMA SPACE STEP BRACKET_CLOSE SPACE COLON"
-        " | FOR SPACE EXPRESSION_IDENTIFIER SPACE IN SPACE RANGE BRACKET_OPEN INITIAL COMMA SPACE FINAL BRACKET_CLOSE SPACE COLON",
-        "INITIAL -> DIGIT",
-        "FINAL -> DIGIT",
-        "STEP -> DIGIT",
-        "FOR_LOOP -> FOR_HEADER NEW_LINE TAB_INDENT DISPLAY",
-        "ADVANCED_FOR_LOOP -> FOR_LOOP | FOR_HEADER NEW_LINE TAB_INDENT ADVANCED_DISPLAY",
+        # If/else branching
+        "IF_BLOCK": ["IF COND COLON NEWLINE INDENT STMT DEDENT ELSE_BLOCK"],
+        "ELSE_BLOCK": ["ELSE COLON NEWLINE INDENT STMT DEDENT"],
 
-        # While Loops (relaxed, without semantic coupling)
-        "RELATIONAL_OPERATOR_LESS -> '<' | '<='",
-        "RELATIONAL_OPERATOR_GREATER -> '>' | '>='",
-        "EXPRESSION_IDENTIFIER_WHILE -> VARIABLE",
-        "WHILE_IDENTIFIER -> VARIABLE",
-        "FINAL_LESS -> DIGIT",
-        "FINAL_GREATER -> DIGIT",
-        "CONDITION_EXPRESSION_LESS -> EXPRESSION_IDENTIFIER_WHILE SPACE RELATIONAL_OPERATOR_LESS SPACE FINAL_LESS",
-        "CONDITION_EXPRESSION_GREATER -> EXPRESSION_IDENTIFIER_WHILE SPACE RELATIONAL_OPERATOR_GREATER SPACE FINAL_GREATER",
-        "WHILE_HEADER_LESS -> WHILE SPACE CONDITION_EXPRESSION_LESS SPACE COLON NEW_LINE",
-        "WHILE_LOOP_LESS -> WHILE_HEADER_LESS TAB_INDENT DISPLAY NEW_LINE TAB_INDENT UPDATE_LESS",
-        "UPDATE_LESS -> WHILE_IDENTIFIER SPACE EQUALS SPACE WHILE_IDENTIFIER SPACE '+' SPACE STEP",
-        "WHILE_HEADER_GREATER -> WHILE SPACE CONDITION_EXPRESSION_GREATER SPACE COLON NEW_LINE",
-        "WHILE_LOOP_GREATER -> WHILE_HEADER_GREATER TAB_INDENT DISPLAY NEW_LINE TAB_INDENT UPDATE_GREATER",
-        "UPDATE_GREATER -> WHILE_IDENTIFIER SPACE EQUALS SPACE WHILE_IDENTIFIER SPACE '-' SPACE STEP",
+        # Conditions (just expressions now, since precedence is layered)
+        "COND": ["EXPR"],
 
-        # Displaying
-        "DISPLAY -> PRINT SPACE BRACKET_OPEN DISPLAY_IDENTIFIER BRACKET_CLOSE",
-        "ADVANCED_DISPLAY -> DISPLAY | PRINT SPACE BRACKET_OPEN DISPLAY_EXPRESSION BRACKET_CLOSE",
-        "DISPLAY_IDENTIFIER -> VARIABLE | DIGIT",
+        # ---- Expressions with operator precedence ----
+        "EXPR": ["OR_EXPR"],
 
-        # Top-level compositions (levels)
-        "LEVEL1_1 -> IDENTIFIER_INITIALIZATION SIMPLE_ASSIGNMENTS ADVANCED_DISPLAY",
-        "LEVEL1_2 -> IDENTIFIER_INITIALIZATION ADVANCED_ASSIGNMENTS ADVANCED_DISPLAY",
-        "LEVEL2_1 -> IDENTIFIER_INITIALIZATION SIMPLE_IF_STATEMENT TAB_INDENT DISPLAY"
-        " | IDENTIFIER_INITIALIZATION SIMPLE_IF_STATEMENT TAB_INDENT DISPLAY NEW_LINE SIMPLE_ELIF_STATEMENT TAB_INDENT DISPLAY NEW_LINE ELSE_STATEMENT TAB_INDENT DISPLAY"
-        " | IDENTIFIER_INITIALIZATION SIMPLE_IF_STATEMENT TAB_INDENT DISPLAY NEW_LINE ELSE_STATEMENT TAB_INDENT DISPLAY",
-        "LEVEL2_2 -> IDENTIFIER_INITIALIZATION ADVANCED_ASSIGNMENTS ADVANCED_IF_STATEMENT TAB_INDENT ADVANCED_DISPLAY"
-        " | IDENTIFIER_INITIALIZATION ADVANCED_ASSIGNMENTS ADVANCED_IF_STATEMENT TAB_INDENT ADVANCED_DISPLAY NEW_LINE ADVANCED_ELIF_STATEMENT TAB_INDENT ADVANCED_DISPLAY NEW_LINE ELSE_STATEMENT TAB_INDENT ADVANCED_DISPLAY"
-        " | IDENTIFIER_INITIALIZATION ADVANCED_ASSIGNMENTS ADVANCED_IF_STATEMENT TAB_INDENT ADVANCED_DISPLAY NEW_LINE ELSE_STATEMENT TAB_INDENT ADVANCED_DISPLAY",
-        "LEVEL3_1 -> IDENTIFIER_INITIALIZATION FOR_LOOP",
-        "LEVEL3_2 -> IDENTIFIER_INITIALIZATION ADVANCED_ASSIGNMENTS ADVANCED_FOR_LOOP",
-        "LEVEL4_1 -> IDENTIFIER_INITIALIZATION WHILE_LOOP_LESS | IDENTIFIER_INITIALIZATION WHILE_LOOP_GREATER",
-        "ALL -> LEVEL1_1 | LEVEL1_2 | LEVEL2_1 | LEVEL2_2 | LEVEL3_1 | LEVEL3_2 | LEVEL4_1",
-    ]
+        "OR_EXPR": ["AND_EXPR", "OR_EXPR OR AND_EXPR"],
+
+        "AND_EXPR": ["NOT_EXPR", "AND_EXPR AND NOT_EXPR"],
+
+        "NOT_EXPR": ["NOT NOT_EXPR", "COMPARISON"],
+
+        # Comparisons like a < b <= c
+        "COMPARISON": ["ARITH_EXPR", "ARITH_EXPR COMP_CHAIN"],
+        "COMP_CHAIN": ["BINARY_CMP ARITH_EXPR", "BINARY_CMP ARITH_EXPR COMP_CHAIN"],
+
+        # Arithmetic expressions
+        "ARITH_EXPR": ["TERM", "ARITH_EXPR ADDOP TERM"],
+        "TERM": ["FACTOR", "TERM MULOP FACTOR"],
+
+        # Atoms
+        "FACTOR": ["VARIABLE", "DIGIT", "LPAREN EXPR RPAREN"],
+    }
+
+
+    lines = []
+    for lhs, rhs_list in terminal_rules.items():
+        for rhs_item in rhs_list:
+            lines.append(f"{lhs} -> '{rhs_item}'")
+
+    for lhs, rhs in non_terminal_rules.items():
+        rhs_str = " | ".join(rhs)
+        lines.append(f"{lhs} -> {rhs_str}")
 
     grammar_text = "\n".join(lines)
-    return CFG.fromstring(grammar_text)
+    grammar = CFG.fromstring(grammar_text)
+    grammar._start = Nonterminal("S")
+
+    return grammar
+
 
 
 def realize_program(tokens: Sequence[str]) -> str:
-    """Turn a list of terminal tokens into a program string.
+    code = []
+    indent = 0
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "<NEWLINE>":
+            code.append("\n")
+        elif tok == "<INDENT>":
+            indent += 1
+            code.append("    " * indent)
+        elif tok == "<DEDENT>":
+            indent -= 1
+            code.append("    " * indent)
+        else:
+            # space before normal tokens except after newline/indent
+            if code and not code[-1].endswith(("\n", " ", "(", "[")):
+                code.append(" ")
+            code.append(tok)
+        i += 1
+    return "".join(code)
 
-    Replaces formatting placeholders with actual whitespace characters and removes
-    token separators by concatenation.
-    """
-    text = "".join(tokens)
-    text = text.replace("SPACE", " ")
-    text = text.replace("NEW_LINE", "\n")
-    text = text.replace("TAB_INDENT", "\t")
-    return text
 
 
-def sample_programs(
-    n: int = 5,
-    level: str = "ALL",
-    max_depth: int = 30,
+def generate_random(
+    grammar: CFG,
+    symbol: Optional[Nonterminal] = None,
+    max_depth: int = 6,
+    defined_vars: Optional[Set[str]] = None,
     seed: Optional[int] = None,
 ) -> List[str]:
-    """Sample programs from the CFG.
-
-    - level: one of 'ALL', 'LEVEL1.1', 'LEVEL1.2', 'LEVEL2.1', 'LEVEL2.2', 'LEVEL3.1', 'LEVEL3.2', 'LEVEL4.1'
-    - max_depth: controls derivation depth during generation
-    """
+    """Randomly generate a sentence from a CFG with depth control and variable tracking."""
     if seed is not None:
         random.seed(seed)
+        seed += 1
 
-    cfg = get_cfg()
-    start_symbol = level if level == "ALL" else level.replace(".", "_")
-    start = Nonterminal(start_symbol)
+    if defined_vars is None:
+        defined_vars = set()
 
-    programs: List[str] = []
-    # NLTK's generate enumerates breadth-first. We'll shuffle the results to add variety
-    # and stop after collecting n items.
-    all_candidates: List[str] = []
-    for sent in generate(cfg, start=start, depth=max_depth):
-        all_candidates.append(realize_program(sent))
-        if len(all_candidates) >= max(100, n * 10):
-            break
+    if symbol is None:
+        symbol = grammar.start()
 
-    random.shuffle(all_candidates)
-    for s in all_candidates[:n]:
-        programs.append(s)
-    return programs
+    # Terminal symbol
+    if not isinstance(symbol, Nonterminal):
+        return [str(symbol)]
+
+    # Get productions for this non-terminal
+    prods = grammar.productions(lhs=symbol)
+
+    if max_depth <= 0:
+        # Filter out self-recursive productions
+        prods = [
+            p for p in prods
+            if all(not (isinstance(r, Nonterminal) and r == symbol) for r in p.rhs())
+        ]
+        if not prods:
+            prods = grammar.productions(lhs=symbol)
+
+    # Pick a random production
+    prod = random.choice(list(prods))
+    result = []
+
+    # Track local variable definitions
+    local_defined = defined_vars.copy()
+
+    for r in prod.rhs():
+        # Special handling: assignments define variables
+        if isinstance(r, Nonterminal) and r.symbol() == "ASSIGNMENT":
+            stmt_tokens = generate_random(grammar, r, max_depth-1, local_defined, seed)
+            # first token is VARIABLE (assume VARIABLE EQUALS ...)
+            local_defined.add(stmt_tokens[0])
+            result.extend(stmt_tokens)
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "PARAMS":
+            params_tokens = generate_random(grammar, r, max_depth-1, local_defined, seed)
+            for tok in params_tokens:
+                if tok.isalpha():  # simple check for variable name
+                    local_defined.add(tok)
+            result.extend(params_tokens)
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "VARIABLE":
+            # Pick only from defined variables if any
+            if local_defined:
+                result.append(random.choice(list(local_defined)))
+            else:
+                # fallback: pick a random single-letter variable
+                result.append(random.choice([chr(c) for c in range(ord('a'), ord('z')+1)]))
+        else:
+            result.extend(generate_random(grammar, r, max_depth-1, local_defined, seed))
+
+    return result
+
+
+def parse_program(program: str) -> bool:
+    try:
+        ast.parse(program)
+        return True
+    except Exception as e:
+        return False
+
+def sample_programs(grammar: CFG, n: int = 100, **kwargs) -> List[str]:
+    return [realize_program(generate_random(grammar, **kwargs)) for _ in range(n)]
 
 
 __all__ = [
