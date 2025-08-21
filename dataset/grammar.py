@@ -42,6 +42,14 @@ def get_cfg() -> CFG:
         "AND": ["and"],
         "OR": ["or"],
         "NOT": ["not"],
+
+        # loops
+        "WHILE": ["while"],
+        "FOR": ["for"],
+        "IN": ["in"],
+        "RANGE": ["range"],
+        "BREAK": ["break"],
+        "CONTINUE": ["continue"],
     }
 
     non_terminal_rules = {
@@ -54,8 +62,10 @@ def get_cfg() -> CFG:
         # Parameters
         "PARAMS": ["VARIABLE", "VARIABLE COMMA PARAMS"],
 
-        # Function body: either a statement or an if-block
-        "BODY": ["STMT", "IF_BLOCK", "ASSIGNMENT"],
+        # Function body: multiple statements
+        "BODY": ["STMT_LIST"],
+        "STMT_LIST": ["STMT_OR_BLOCK", "STMT_OR_BLOCK STMT_LIST"],
+        "STMT_OR_BLOCK": ["STMT", "IF_BLOCK", "WHILE_LOOP", "FOR_LOOP", "ASSIGNMENT"],
 
         # Assignment and return
         "ASSIGNMENT": ["VARIABLE EQUALS EXPR NEWLINE"],
@@ -86,7 +96,24 @@ def get_cfg() -> CFG:
         "TERM": ["FACTOR", "TERM MULOP FACTOR"],
 
         # Atoms
-        "FACTOR": ["VARIABLE", "DIGIT", "LPAREN EXPR RPAREN"],
+        "FACTOR": ["VARIABLE", "DIGIT", "LPAREN EXPR RPAREN", "FUNCTION_CALL"],
+
+        # Function calls
+        "FUNCTION_CALL": ["RANGE_CALL", "VARIABLE LPAREN ARG_LIST RPAREN"],
+        "ARG_LIST": ["", "EXPR", "EXPR COMMA ARG_LIST"],
+        "RANGE_CALL": ["RANGE LPAREN RANGE_ARGS RPAREN"],
+        "RANGE_ARGS": ["SIMPLE_EXPR", "SIMPLE_EXPR COMMA SIMPLE_EXPR", "SIMPLE_EXPR COMMA SIMPLE_EXPR COMMA SIMPLE_EXPR"],
+        "SIMPLE_EXPR": ["VARIABLE", "DIGIT", "LPAREN SIMPLE_EXPR RPAREN"],
+
+        # Loop constructs
+        "WHILE_LOOP": ["WHILE COND COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT"],
+        "FOR_LOOP": ["FOR VARIABLE IN ITERABLE COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT"],
+        "ITERABLE": ["RANGE_CALL", "VARIABLE"],
+        "LOOP_STMT_LIST": ["LOOP_STMT", "LOOP_STMT LOOP_STMT_LIST"],
+        "LOOP_STMT": ["ASSIGNMENT", "RETURN_STMT", "BREAK_STMT", "CONTINUE_STMT"],
+        "RETURN_STMT": ["RETURN EXPR NEWLINE"],
+        "BREAK_STMT": ["BREAK NEWLINE"],
+        "CONTINUE_STMT": ["CONTINUE NEWLINE"],
     }
 
 
@@ -110,19 +137,25 @@ def get_cfg() -> CFG:
 def realize_program(tokens: Sequence[str]) -> str:
     code = []
     indent = 0
+    pending_indent = False
     i = 0
     while i < len(tokens):
         tok = tokens[i]
         if tok == "<NEWLINE>":
             code.append("\n")
+            pending_indent = True
         elif tok == "<INDENT>":
             indent += 1
-            code.append("    " * indent)
+            pending_indent = True
         elif tok == "<DEDENT>":
             indent -= 1
-            code.append("    " * indent)
+            pending_indent = True
         else:
-            # space before normal tokens except after newline/indent
+            # Add pending indentation before the first real token
+            if pending_indent:
+                code.append("    " * indent)
+                pending_indent = False
+            # space before normal tokens except after newline/indent/dedent
             if code and not code[-1].endswith(("\n", " ", "(", "[")):
                 code.append(" ")
             code.append(tok)
@@ -194,6 +227,90 @@ def generate_random(
             else:
                 # fallback: pick a random single-letter variable
                 result.append(random.choice([chr(c) for c in range(ord('a'), ord('z')+1)]))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "FUNCTION_CALL":
+            # For function calls, prefer range over other functions
+            if random.random() < 0.9:  # 90% chance for range
+                func_tokens = generate_random(grammar, Nonterminal("RANGE_CALL"), max_depth-1, local_defined, seed)
+            else:
+                # Generate a simple function call with a random variable name
+                func_name = random.choice([chr(c) for c in range(ord('a'), ord('z')+1)])
+                # Ensure we have at least one argument
+                if random.random() < 0.8:  # 80% chance of having arguments
+                    arg_list = generate_random(grammar, Nonterminal("ARG_LIST"), max_depth-1, local_defined, seed)
+                    func_tokens = [func_name, "(", *arg_list, ")"]
+                else:
+                    func_tokens = [func_name, "(", ")"]
+            result.extend(func_tokens)
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "RANGE_ARGS":
+            # Choose between 1, 2, or 3 arguments for range, using simple expressions
+            arg_options = [
+                [Nonterminal("SIMPLE_EXPR")],  # range(n)
+                [Nonterminal("SIMPLE_EXPR"), ",", Nonterminal("SIMPLE_EXPR")],  # range(start, stop)
+                [Nonterminal("SIMPLE_EXPR"), ",", Nonterminal("SIMPLE_EXPR"), ",", Nonterminal("SIMPLE_EXPR")]  # range(start, stop, step)
+            ]
+            chosen_args = random.choice(arg_options)
+            for arg in chosen_args:
+                if isinstance(arg, str):
+                    result.append(arg)
+                else:
+                    result.extend(generate_random(grammar, arg, max_depth-1, local_defined, seed))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "SIMPLE_EXPR":
+            # Generate simple expressions for range arguments
+            simple_options = [
+                [Nonterminal("VARIABLE")],
+                [Nonterminal("DIGIT")],
+                [Nonterminal("DIGIT")],
+                [Nonterminal("LPAREN"), Nonterminal("SIMPLE_EXPR"), Nonterminal("RPAREN")]
+            ]
+            chosen = random.choice(simple_options)
+            for item in chosen:
+                if isinstance(item, str):
+                    result.append(item)
+                else:
+                    result.extend(generate_random(grammar, item, max_depth-1, local_defined, seed))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "ARG_LIST":
+            # Handle argument lists - prefer to have some arguments
+            if random.random() < 0.1:  # 10% chance of empty args
+                pass  # No arguments
+            else:
+                # Generate 1-2 arguments with simple expressions
+                num_args = random.randint(1, 2)
+                for i in range(num_args):
+                    if i > 0:
+                        result.append(",")
+                    result.extend(generate_random(grammar, Nonterminal("SIMPLE_EXPR"), max_depth-1, local_defined, seed))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "LOOP_STMT":
+            # For loop statements, increase loop probability
+            stmt_options = ["ASSIGNMENT", "RETURN_STMT", "BREAK_STMT", "CONTINUE_STMT"]
+            if max_depth > 2 and random.random() < 0.4:  # Higher chance for nested constructs
+                stmt_options.extend(["WHILE_LOOP", "FOR_LOOP", "IF_BLOCK"])
+
+            stmt_type = random.choice(stmt_options)
+            result.extend(generate_random(grammar, Nonterminal(stmt_type), max_depth-1, local_defined, seed))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "STMT_LIST":
+            # Generate 1-4 statements for function body
+            num_stmts = random.randint(1, 4)
+            for i in range(num_stmts):
+                result.extend(generate_random(grammar, Nonterminal("STMT_OR_BLOCK"), max_depth-1, local_defined, seed))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "STMT_OR_BLOCK":
+            # Choose statement type with preference for loops
+            stmt_options = ["STMT", "STMT", "IF_BLOCK", "IF_BLOCK", "WHILE_LOOP", "FOR_LOOP", "WHILE_LOOP", "FOR_LOOP", "ASSIGNMENT", "ASSIGNMENT"]
+            stmt_type = random.choice(stmt_options)
+            result.extend(generate_random(grammar, Nonterminal(stmt_type), max_depth-1, local_defined, seed))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "LOOP_STMT_LIST":
+            # Generate 1-3 statements for loop body
+            num_stmts = random.randint(1, 3)
+            for i in range(num_stmts):
+                result.extend(generate_random(grammar, Nonterminal("LOOP_STMT"), max_depth-1, local_defined, seed))
+
         else:
             result.extend(generate_random(grammar, r, max_depth-1, local_defined, seed))
 
