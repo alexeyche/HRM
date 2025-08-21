@@ -35,23 +35,12 @@ def test_parse_program():
         assert tree is not None
 
 
-def test_tokenize_supported_programs():
-    """Test tokenization of programs that are supported by the current grammar."""
+def test_tokenize_all_programs():
     registry = get_program_registry()
 
-    # Programs that should work with the current grammar (subset of Python)
-    supported_programs = [
-        'max_of_two', 'min_of_two', 'is_positive', 'is_negative',
-        'is_zero', 'sum_of_two', 'difference', 'product',
-        'double', 'add_ten', 'subtract_five', 'absolute_value',
-        'is_even', 'square', 'cube', 'power_of_two', 'half'
-    ]
-
-    for program_name in supported_programs:
+    for program_name in registry.list_names():
         program = registry.get(program_name)
-        if program is None:
-            pytest.skip(f"Program {program_name} not found in registry")
-            continue
+        assert program is not None
 
         log.info(f"Parsing program {program_name}: \n{program.implementation}")
 
