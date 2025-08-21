@@ -49,7 +49,6 @@ def test_tokenize_all_programs():
         assert len(tokens) > 0, f"Program {program_name} has no tokens"
 
 
-@pytest.mark.skip(reason="This test is for later")
 def test_parse_all_programs():
     grammar = get_cfg()
     parser = RecursiveDescentParser(grammar)

@@ -794,8 +794,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[0, -1, 2], -1], output=True),
             Example(input=[[5, 5, 5], 5], output=True)
         ],
-        implementation="""def program(arr, value):
-    return value in arr"""
+        implementation="""def program(a, v):
+    return a in v"""
     ))
 
     registry.register(ProgramSpecification(
@@ -856,8 +856,8 @@ def create_default_registry() -> ProgramRegistry:
         ],
         implementation="""def program(a):
     r = 1
-    for num in a:
-        r *= num
+    for x in a:
+        r *= x
     return r"""
     ))
 
@@ -1033,10 +1033,10 @@ def create_default_registry() -> ProgramRegistry:
             Example(input="", output="")
         ],
         implementation="""def program(s):
-    result = ""
+    r = ""
     for i in range(len(s)-1, -1, -1):
-        result += s[i]
-    return result"""
+        r += s[i]
+    return r"""
     ))
 
     registry.register(ProgramSpecification(

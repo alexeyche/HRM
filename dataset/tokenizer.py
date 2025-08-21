@@ -53,6 +53,30 @@ def create_token_patterns() -> Dict[str, str]:
     if '!=' in binary_cmp_tokens:
         patterns['NEQ'] = re.escape('!=')
 
+    # Handle augmented assignment operators
+    if 'ADD_ASSIGN' in token_patterns and token_patterns['ADD_ASSIGN']:
+        patterns['ADD_ASSIGN'] = re.escape(token_patterns['ADD_ASSIGN'][0])
+    if 'SUB_ASSIGN' in token_patterns and token_patterns['SUB_ASSIGN']:
+        patterns['SUB_ASSIGN'] = re.escape(token_patterns['SUB_ASSIGN'][0])
+    if 'MUL_ASSIGN' in token_patterns and token_patterns['MUL_ASSIGN']:
+        patterns['MUL_ASSIGN'] = re.escape(token_patterns['MUL_ASSIGN'][0])
+    if 'DIV_ASSIGN' in token_patterns and token_patterns['DIV_ASSIGN']:
+        patterns['DIV_ASSIGN'] = re.escape(token_patterns['DIV_ASSIGN'][0])
+    if 'MOD_ASSIGN' in token_patterns and token_patterns['MOD_ASSIGN']:
+        patterns['MOD_ASSIGN'] = re.escape(token_patterns['MOD_ASSIGN'][0])
+
+    # Handle power and floor division operators
+    if 'POWER' in token_patterns and token_patterns['POWER']:
+        patterns['POWER'] = re.escape(token_patterns['POWER'][0])
+    if 'FLOOR_DIV' in token_patterns and token_patterns['FLOOR_DIV']:
+        patterns['FLOOR_DIV'] = re.escape(token_patterns['FLOOR_DIV'][0])
+
+    # Handle string literals specially
+    if 'STRING' in token_patterns and token_patterns['STRING']:
+        # Create pattern for string literals (both single and double quotes)
+        # This pattern matches opening quote, content (non-greedy), closing quote
+        patterns['STRING'] = r'["\'](?:[^"\\]|\\.)*["\']'
+
     # Handle other multi-character tokens
     for token_type, tokens in token_patterns.items():
         if token_type == 'BINARY_CMP':
@@ -62,8 +86,8 @@ def create_token_patterns() -> Dict[str, str]:
                 patterns['LT'] = re.escape('<')
             if '>' in single_char_cmps:
                 patterns['GT'] = re.escape('>')
-        elif token_type in ['VARIABLE', 'DIGIT']:
-            # Handle these separately below
+        elif token_type in ['VARIABLE', 'DIGIT', 'STRING']:
+            # Handle these separately
             continue
         else:
             # For tokens that should be single patterns
@@ -75,10 +99,10 @@ def create_token_patterns() -> Dict[str, str]:
                 else:
                     patterns[token_type] = '|'.join(escaped_tokens)
 
-    # Handle variables (single letters a-z)
+    # Handle variables (letters, digits, and underscores)
     variables = token_patterns.get('VARIABLE', [])
     if variables:
-        patterns['VARIABLE'] = r'[a-z]'
+        patterns['VARIABLE'] = r'[a-zA-Z_][a-zA-Z0-9_]*'
 
     # Handle digits (0-21)
     digits = token_patterns.get('DIGIT', [])
@@ -104,18 +128,25 @@ def tokenize_code(code: str) -> List[str]:
     tokens = []
     patterns = create_token_patterns()
 
-    # Define priority order - keywords and multi-char operators first
+            # Define priority order - keywords and multi-char operators first
     priority_order = [
-        # Multi-character operators first
-        'LTE', 'GTE', 'EQ', 'NEQ',
+        # String literals first (most specific)
+        'STRING',
+        # Multi-character operators first (longest first)
+        'ADD_ASSIGN', 'SUB_ASSIGN', 'MUL_ASSIGN', 'DIV_ASSIGN', 'MOD_ASSIGN',
+        'LTE', 'GTE', 'EQ', 'NEQ', 'POWER', 'FLOOR_DIV',
         # Keywords (longest first)
         'PROGRAM_NAME', 'CONTINUE', 'RETURN',
-        'WHILE', 'BREAK', 'RANGE',
+        'WHILE', 'BREAK', 'RANGE', 'REVERSE', 'TRUE', 'FALSE',
         'DEF', 'FOR', 'AND', 'NOT', 'ELSE', 'OR', 'IF', 'IN',
+        # Built-in functions
+        'SUM', 'LEN', 'MIN', 'MAX', 'ABS', 'SORTED', 'SET', 'STR', 'INT',
+        # Method names
+        'APPEND', 'UPPER', 'LOWER',
         # Special tokens
         'NEWLINE', 'INDENT', 'DEDENT',
         # Single character operators and punctuation
-        'LPAREN', 'RPAREN', 'COMMA', 'COLON', 'EQUALS',
+        'LPAREN', 'RPAREN', 'LBRACKET', 'RBRACKET', 'COMMA', 'COLON', 'EQUALS', 'DOT',
         'ADDOP', 'MULOP', 'LT', 'GT',
         # Variables and digits last (most general)
         'VARIABLE', 'DIGIT'
@@ -137,13 +168,38 @@ def tokenize_code(code: str) -> List[str]:
             i += 1
             continue
 
+        # Skip comments (from # to end of line)
+        if code[i] == '#':
+            while i < len(code) and code[i] != '\n':
+                i += 1
+            continue
+
         # Try to match a token with the highest priority patterns first
         matched = False
         for regex, token_type in compiled_patterns:
             match = regex.match(code, i)
             if match:
-                token = match.group(0)
-                tokens.append(token)
+                # For single-character tokens that have dedicated token types,
+                # return the actual token value
+                if token_type in ['LBRACKET', 'RBRACKET', 'DOT']:
+                    token = match.group(0)
+                    tokens.append(token)
+                elif token_type in ['POWER', 'FLOOR_DIV']:
+                    # For multi-character operators, return the actual token value
+                    token = match.group(0)
+                    tokens.append(token)
+                elif token_type == 'STRING':
+                    # For string literals, return the STRING token type
+                    token = match.group(0)
+                    tokens.append(token)
+                elif token_type in ['ADD_ASSIGN', 'SUB_ASSIGN', 'MUL_ASSIGN', 'DIV_ASSIGN', 'MOD_ASSIGN']:
+                    # For augmented assignment operators, return the actual token value
+                    token = match.group(0)
+                    tokens.append(token)
+                else:
+                    # For other tokens, keep the literal value
+                    token = match.group(0)
+                    tokens.append(token)
                 i = match.end()
                 matched = True
                 break

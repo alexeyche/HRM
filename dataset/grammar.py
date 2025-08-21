@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple, Dict
 
 import random
 from nltk import CFG, Nonterminal
@@ -44,6 +44,49 @@ def get_token_patterns() -> Dict[str, List[str]]:
         "OR": ["or"],
         "NOT": ["not"],
 
+        # brackets and dot
+        "LBRACKET": ["["],
+        "RBRACKET": ["]"],
+        "DOT": ["."],
+
+        # augmented assignment operators
+        "ADD_ASSIGN": ["+="],
+        "SUB_ASSIGN": ["-="],
+        "MUL_ASSIGN": ["*="],
+        "DIV_ASSIGN": ["/="],
+        "MOD_ASSIGN": ["%="],
+
+        # power operator
+        "POWER": ["**"],
+        "FLOOR_DIV": ["//"],
+
+        # built-in functions
+        "SUM": ["sum"],
+        "LEN": ["len"],
+        "MIN": ["min"],
+        "MAX": ["max"],
+        "RANGE": ["range"],
+        "ABS": ["abs"],
+        "SORTED": ["sorted"],
+        "SET": ["set"],
+        "STR": ["str"],
+        "INT": ["int"],
+
+        # method names
+        "APPEND": ["append"],
+        "UPPER": ["upper"],
+        "LOWER": ["lower"],
+
+        # keywords for function arguments
+        "REVERSE": ["reverse"],
+
+        # boolean literals
+        "TRUE": ["True"],
+        "FALSE": ["False"],
+
+        # string literals - support both empty and non-empty strings
+        "STRING": ['""', "''", "STRING"],
+
         # loops
         "WHILE": ["while"],
         "FOR": ["for"],
@@ -73,10 +116,13 @@ def get_cfg() -> CFG:
         # Function body: multiple statements
         "BODY": ["STMT_LIST"],
         "STMT_LIST": ["STMT_OR_BLOCK", "STMT_OR_BLOCK STMT_LIST"],
-        "STMT_OR_BLOCK": ["STMT", "IF_BLOCK", "WHILE_LOOP", "FOR_LOOP", "ASSIGNMENT"],
+        "STMT_OR_BLOCK": ["STMT", "IF_BLOCK", "WHILE_LOOP", "FOR_LOOP"],
 
         # Assignment and return
-        "ASSIGNMENT": ["VARIABLE EQUALS EXPR NEWLINE"],
+        "ASSIGNMENT": ["SIMPLE_ASSIGN", "AUGMENTED_ASSIGN"],
+        "SIMPLE_ASSIGN": ["VARIABLE EQUALS EXPR NEWLINE"],
+        "AUGMENTED_ASSIGN": ["VARIABLE ASSIGN_OP EXPR NEWLINE"],
+        "ASSIGN_OP": ["ADD_ASSIGN", "SUB_ASSIGN", "MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN"],
         "STMT": ["RETURN EXPR NEWLINE"],
 
         # If/else branching
@@ -99,26 +145,57 @@ def get_cfg() -> CFG:
         "COMPARISON": ["ARITH_EXPR", "ARITH_EXPR COMP_CHAIN"],
         "COMP_CHAIN": ["BINARY_CMP ARITH_EXPR", "BINARY_CMP ARITH_EXPR COMP_CHAIN"],
 
-        # Arithmetic expressions
+        # Arithmetic expressions (with operator precedence)
         "ARITH_EXPR": ["TERM", "ARITH_EXPR ADDOP TERM"],
-        "TERM": ["FACTOR", "TERM MULOP FACTOR"],
+        "TERM": ["POWER_EXPR", "TERM MULOP POWER_EXPR", "TERM FLOOR_DIV POWER_EXPR"],
+        "POWER_EXPR": ["FACTOR", "FACTOR POWER POWER_EXPR"],
 
         # Atoms
-        "FACTOR": ["VARIABLE", "DIGIT", "LPAREN EXPR RPAREN", "FUNCTION_CALL"],
+        "FACTOR": ["VARIABLE", "DIGIT", "STRING", "LPAREN EXPR RPAREN", "FUNCTION_CALL", "LIST_LITERAL", "LIST_INDEX", "METHOD_CALL"],
 
-        # Function calls
-        "FUNCTION_CALL": ["RANGE_CALL", "VARIABLE LPAREN ARG_LIST RPAREN"],
+        # List literals
+        "LIST_LITERAL": ["LBRACKET LIST_CONTENTS RBRACKET"],
+        "LIST_CONTENTS": ["", "EXPR_LIST"],
+        "EXPR_LIST": ["EXPR", "EXPR COMMA EXPR_LIST"],
+
+        # List indexing
+        "LIST_INDEX": ["VARIABLE LBRACKET EXPR RBRACKET"],
+
+        # Method calls
+        "METHOD_CALL": ["VARIABLE DOT METHOD_NAME LPAREN ARG_LIST RPAREN"],
+        "METHOD_NAME": ["APPEND", "UPPER", "LOWER"],
+
+        # Function calls (built-in and user-defined)
+        "FUNCTION_CALL": ["BUILTIN_FUNC", "RANGE_CALL", "VARIABLE LPAREN ARG_LIST RPAREN"],
+        "BUILTIN_FUNC": [
+            "SUM LPAREN EXPR RPAREN",
+            "LEN LPAREN EXPR RPAREN",
+            "MIN LPAREN EXPR RPAREN",
+            "MAX LPAREN EXPR RPAREN",
+            "ABS LPAREN EXPR RPAREN",
+            "SORTED LPAREN EXPR RPAREN",
+            "SORTED LPAREN EXPR COMMA REVERSE_ARG RPAREN",
+            "SET LPAREN EXPR RPAREN",
+            "STR LPAREN EXPR RPAREN",
+            "INT LPAREN EXPR RPAREN"
+        ],
+        "REVERSE_ARG": ["REVERSE EQUALS BOOL_VALUE"],
+        "BOOL_VALUE": ["TRUE", "FALSE"],
         "ARG_LIST": ["", "EXPR", "EXPR COMMA ARG_LIST"],
         "RANGE_CALL": ["RANGE LPAREN RANGE_ARGS RPAREN"],
         "RANGE_ARGS": ["SIMPLE_EXPR", "SIMPLE_EXPR COMMA SIMPLE_EXPR", "SIMPLE_EXPR COMMA SIMPLE_EXPR COMMA SIMPLE_EXPR"],
         "SIMPLE_EXPR": ["VARIABLE", "DIGIT", "LPAREN SIMPLE_EXPR RPAREN"],
 
-        # Loop constructs
-        "WHILE_LOOP": ["WHILE COND COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT"],
-        "FOR_LOOP": ["FOR VARIABLE IN ITERABLE COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT"],
+        # Loop constructs - separate from function statements
+        "WHILE_LOOP": ["WHILE COND COLON NEWLINE INDENT LOOP_BODY DEDENT"],
+        "FOR_LOOP": ["FOR VARIABLE IN ITERABLE COLON NEWLINE INDENT LOOP_BODY DEDENT"],
         "ITERABLE": ["RANGE_CALL", "VARIABLE"],
+        "LOOP_BODY": ["LOOP_STMT_LIST"],
         "LOOP_STMT_LIST": ["LOOP_STMT", "LOOP_STMT LOOP_STMT_LIST"],
-        "LOOP_STMT": ["ASSIGNMENT", "RETURN_STMT", "BREAK_STMT", "CONTINUE_STMT"],
+        "LOOP_STMT": ["ASSIGNMENT", "IF_BLOCK", "BREAK_STMT", "CONTINUE_STMT"],
+
+        # Function statements (cannot have return in loops)
+        "STMT": ["ASSIGNMENT", "RETURN_STMT"],
         "RETURN_STMT": ["RETURN EXPR NEWLINE"],
         "BREAK_STMT": ["BREAK NEWLINE"],
         "CONTINUE_STMT": ["CONTINUE NEWLINE"],
@@ -293,10 +370,10 @@ def generate_random(
                     result.extend(generate_random(grammar, Nonterminal("SIMPLE_EXPR"), max_depth-1, local_defined, seed))
 
         elif isinstance(r, Nonterminal) and r.symbol() == "LOOP_STMT":
-            # For loop statements, increase loop probability
-            stmt_options = ["ASSIGNMENT", "RETURN_STMT", "BREAK_STMT", "CONTINUE_STMT"]
+            # For loop statements, only allow valid loop constructs
+            stmt_options = ["ASSIGNMENT", "BREAK_STMT", "CONTINUE_STMT"]
             if max_depth > 2 and random.random() < 0.4:  # Higher chance for nested constructs
-                stmt_options.extend(["WHILE_LOOP", "FOR_LOOP", "IF_BLOCK"])
+                stmt_options.extend(["IF_BLOCK"])
 
             stmt_type = random.choice(stmt_options)
             result.extend(generate_random(grammar, Nonterminal(stmt_type), max_depth-1, local_defined, seed))
@@ -305,11 +382,14 @@ def generate_random(
             # Generate 1-4 statements for function body
             num_stmts = random.randint(1, 4)
             for i in range(num_stmts):
-                result.extend(generate_random(grammar, Nonterminal("STMT_OR_BLOCK"), max_depth-1, local_defined, seed))
+                if i == num_stmts - 1:  # Last statement should be return
+                    result.extend(generate_random(grammar, Nonterminal("STMT"), max_depth-1, local_defined, seed))
+                else:
+                    result.extend(generate_random(grammar, Nonterminal("STMT_OR_BLOCK"), max_depth-1, local_defined, seed))
 
         elif isinstance(r, Nonterminal) and r.symbol() == "STMT_OR_BLOCK":
-            # Choose statement type with preference for loops
-            stmt_options = ["STMT", "STMT", "IF_BLOCK", "IF_BLOCK", "WHILE_LOOP", "FOR_LOOP", "WHILE_LOOP", "FOR_LOOP", "ASSIGNMENT", "ASSIGNMENT"]
+            # Choose statement type with preference for assignments and conditionals
+            stmt_options = ["STMT", "STMT", "IF_BLOCK", "WHILE_LOOP", "FOR_LOOP", "ASSIGNMENT", "ASSIGNMENT", "ASSIGNMENT"]
             stmt_type = random.choice(stmt_options)
             result.extend(generate_random(grammar, Nonterminal(stmt_type), max_depth-1, local_defined, seed))
 
@@ -318,6 +398,25 @@ def generate_random(
             num_stmts = random.randint(1, 3)
             for i in range(num_stmts):
                 result.extend(generate_random(grammar, Nonterminal("LOOP_STMT"), max_depth-1, local_defined, seed))
+
+        elif isinstance(r, Nonterminal) and r.symbol() == "STRING":
+            # Generate small string literals (1-3 characters)
+            if random.random() < 0.3:  # 30% chance for empty string
+                result.append(random.choice(['""', "''"]))
+            else:
+                # Generate small strings with 1-3 characters
+                length = random.randint(1, 3)
+                chars = []
+                for _ in range(length):
+                    if random.random() < 0.7:  # 70% chance for lowercase letters
+                        chars.append(random.choice('abcdefghijklmnopqrstuvwxyz'))
+                    else:
+                        chars.append(random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'))
+
+                # Randomly choose single or double quotes
+                quote = random.choice(["'", '"'])
+                string_content = ''.join(chars)
+                result.append(f"{quote}{string_content}{quote}")
 
         else:
             result.extend(generate_random(grammar, r, max_depth-1, local_defined, seed))
@@ -336,11 +435,37 @@ def sample_programs(grammar: CFG, n: int = 100, **kwargs) -> List[str]:
     return [realize_program(generate_random(grammar, **kwargs)) for _ in range(n)]
 
 
+# Function registry documenting supported built-in functions and their argument specifications
+SUPPORTED_FUNCTIONS = {
+    # Built-in functions with argument counts
+    "sum": {"args": 1, "description": "Sum all elements in an iterable"},
+    "len": {"args": 1, "description": "Get length of an iterable or string"},
+    "min": {"args": 1, "description": "Find minimum element in an iterable"},
+    "max": {"args": 1, "description": "Find maximum element in an iterable"},
+    "abs": {"args": 1, "description": "Get absolute value of a number"},
+    "str": {"args": 1, "description": "Convert value to string"},
+    "int": {"args": 1, "description": "Convert value to integer"},
+    "range": {"args": [1, 2, 3], "description": "Generate range of numbers"},
+    "sorted": {"args": [1, 2], "description": "Sort an iterable"},
+    "set": {"args": 1, "description": "Convert iterable to set"},
+    "list": {"args": 1, "description": "Convert iterable to list"},
+}
+
+SUPPORTED_METHODS = {
+    # String methods
+    "upper": {"args": 0, "description": "Convert string to uppercase"},
+    "lower": {"args": 0, "description": "Convert string to lowercase"},
+    # List methods
+    "append": {"args": 1, "description": "Append item to list"},
+}
+
 __all__ = [
     "get_cfg",
     "get_token_patterns",
     "realize_program",
     "sample_programs",
+    "SUPPORTED_FUNCTIONS",
+    "SUPPORTED_METHODS",
 ]
 
 
