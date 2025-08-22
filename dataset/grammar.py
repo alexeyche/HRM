@@ -24,6 +24,7 @@ def get_token_patterns() -> Dict[str, List[str]]:
         "PROGRAM_NAME": ["program"],
         "RETURN": ["return"],
         "IF": ["if"],
+        "ELIF": ["elif"],
         "ELSE": ["else"],
 
         # syntax
@@ -127,8 +128,10 @@ def get_cfg() -> CFG:
         "ASSIGN_OP": ["ADD_ASSIGN", "SUB_ASSIGN", "MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN"],
         "STMT": ["RETURN EXPR NEWLINE"],
 
-        # If/else branching
-        "IF_BLOCK": ["IF COND COLON NEWLINE INDENT STMT DEDENT ELSE_BLOCK"],
+        # If/elif/else branching
+        "IF_BLOCK": ["IF COND COLON NEWLINE INDENT STMT DEDENT", "IF COND COLON NEWLINE INDENT STMT DEDENT ELIF_CHAIN"],
+        "ELIF_BLOCK": ["ELIF COND COLON NEWLINE INDENT STMT DEDENT"],
+        "ELIF_CHAIN": ["ELIF_BLOCK", "ELIF_BLOCK ELIF_CHAIN", "ELSE_BLOCK"],
         "ELSE_BLOCK": ["ELSE COLON NEWLINE INDENT STMT DEDENT"],
 
         # Conditions (just expressions now, since precedence is layered)
