@@ -1229,8 +1229,8 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=["", "test"], output=False),
             Example(input=["abc", ""], output=True)
         ],
-        implementation="""def program(s, sub):
-    return sub in s"""
+        implementation="""def program(s, x):
+    return x in s"""
     ))
 
     # Mathematical Operations (continued)

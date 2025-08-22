@@ -4,7 +4,9 @@ import re
 from typing import List, Dict, Set
 from dataset.grammar import get_cfg, get_token_patterns
 from nltk import CFG
+import logging
 
+log = logging.getLogger(__name__)
 
 def extract_tokens_from_grammar(grammar: CFG) -> Dict[str, Set[str]]:
     """Extract all terminal tokens from the grammar."""
@@ -161,6 +163,7 @@ def tokenize_code(code: str) -> List[str]:
     # Compile all patterns
     compiled_patterns = [(re.compile(pattern), token_type) for pattern, token_type in pattern_list]
 
+    string_literal_start = None
     i = 0
     while i < len(code):
         # Skip whitespace
@@ -172,6 +175,26 @@ def tokenize_code(code: str) -> List[str]:
         if code[i] == '#':
             while i < len(code) and code[i] != '\n':
                 i += 1
+            continue
+
+        is_string_literal_border = code[i] == "'" or code[i] == '"'
+
+        if is_string_literal_border:
+            if string_literal_start is None:
+                string_literal_start = i
+                log.info(f"Starting string literal at {i}")
+                i += 1
+                continue
+            else:
+                string_literal_value = code[string_literal_start:i].strip("'").strip("\"")
+                log.info(f"Got string literal {string_literal_value}")
+                tokens.append("STRING")
+                string_literal_start = None
+                i += 1
+                continue
+
+        if string_literal_start is not None:  # aggregating string literal
+            i += 1
             continue
 
         # Try to match a token with the highest priority patterns first
@@ -190,8 +213,7 @@ def tokenize_code(code: str) -> List[str]:
                     tokens.append(token)
                 elif token_type == 'STRING':
                     # For string literals, return the STRING token type
-                    token = match.group(0)
-                    tokens.append(token)
+                    pass
                 elif token_type in ['ADD_ASSIGN', 'SUB_ASSIGN', 'MUL_ASSIGN', 'DIV_ASSIGN', 'MOD_ASSIGN']:
                     # For augmented assignment operators, return the actual token value
                     token = match.group(0)
