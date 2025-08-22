@@ -71,6 +71,7 @@ def get_token_patterns() -> Dict[str, List[str]]:
         "SET": ["set"],
         "STR": ["str"],
         "INT": ["int"],
+        "LIST": ["list"],
 
         # method names
         "APPEND": ["append"],
@@ -177,7 +178,8 @@ def get_cfg() -> CFG:
             "SORTED LPAREN EXPR COMMA REVERSE_ARG RPAREN",
             "SET LPAREN EXPR RPAREN",
             "STR LPAREN EXPR RPAREN",
-            "INT LPAREN EXPR RPAREN"
+            "INT LPAREN EXPR RPAREN",
+            "LIST LPAREN EXPR RPAREN",
         ],
         "REVERSE_ARG": ["REVERSE EQUALS BOOL_VALUE"],
         "BOOL_VALUE": ["TRUE", "FALSE"],
