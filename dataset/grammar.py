@@ -44,10 +44,11 @@ def get_token_patterns() -> Dict[str, List[str]]:
         "OR": ["or"],
         "NOT": ["not"],
 
-        # brackets and dot
+        # brackets and rest
         "LBRACKET": ["["],
         "RBRACKET": ["]"],
         "DOT": ["."],
+        "UNDERSCORE": ["_"],
 
         # augmented assignment operators
         "ADD_ASSIGN": ["+="],
@@ -190,7 +191,8 @@ def get_cfg() -> CFG:
 
         # Loop constructs - separate from function statements
         "WHILE_LOOP": ["WHILE COND COLON NEWLINE INDENT LOOP_BODY DEDENT"],
-        "FOR_LOOP": ["FOR VARIABLE IN ITERABLE COLON NEWLINE INDENT LOOP_BODY DEDENT"],
+        "FOR_VARIABLE": ["VARIABLE", "UNDERSCORE"],
+        "FOR_LOOP": ["FOR FOR_VARIABLE IN ITERABLE COLON NEWLINE INDENT LOOP_BODY DEDENT"],
         "ITERABLE": ["RANGE_CALL", "VARIABLE"],
         "LOOP_BODY": ["LOOP_STMT_LIST"],
         "LOOP_STMT_LIST": ["LOOP_STMT", "LOOP_STMT LOOP_STMT_LIST"],

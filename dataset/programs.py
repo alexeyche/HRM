@@ -1708,22 +1708,22 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=15, output=17)
         ],
         implementation="""def program(n):
-    candidate = n + 1
+    c = n + 1
     while True:
-        if candidate < 2:
-            candidate += 1
+        if c < 2:
+            c += 1
             continue
 
-        is_prime = True
-        for i in range(2, int(candidate**0.5) + 1):
-            if candidate % i == 0:
-                is_prime = False
+        p = True
+        for i in range(2, int(c**0.5) + 1):
+            if c % i == 0:
+                p = False
                 break
 
-        if is_prime:
-            return candidate
+        if p:
+            return c
 
-        candidate += 1"""
+        c += 1"""
     ))
 
     registry.register(ProgramSpecification(
@@ -1906,14 +1906,14 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=65, output="D"),
             Example(input=55, output="F")
         ],
-        implementation="""def program(score):
-    if score >= 90:
+        implementation="""def program(s):
+    if s >= 90:
         return 'A'
-    elif score >= 80:
+    elif s >= 80:
         return 'B'
-    elif score >= 70:
+    elif s >= 70:
         return 'C'
-    elif score >= 60:
+    elif s >= 60:
         return 'D'
     else:
         return 'F'"""
