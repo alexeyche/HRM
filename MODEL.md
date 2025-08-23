@@ -56,27 +56,4 @@ examples:
 
 ## Outputs
 
-## Output Structure: Graph-Based AST Generation
-
-Instead of generating token sequences, HRM generates a **complete AST as a graph structure**:
-
-### **Core Components**
-1. **Node Existence Vector**: Binary mask determining which of the max_nodes slots are used
-2. **Adjacency Matrix**: Defines parent-child relationships in the AST
-3. **Node Feature Tensors**: Type, operation, variable, constant information for each node
-4. **Node Embeddings**: Rich learned representations after GNN processing
-
-### **Variable-Length Handling**
-The graph approach naturally handles variable AST sizes:
-- Simple functions use few nodes (e.g., 5 nodes for basic sorting)
-- Complex functions use more nodes (e.g., 30+ nodes for recursive algorithms)
-- No arbitrary depth limitations - tree depth determined by graph structure, not processing layers
-
-### **GNN Processing**
-Multiple Graph Neural Network layers iteratively refine all nodes simultaneously:
-- **Layer 1**: Each node learns from immediate neighbors
-- **Layer 2**: Information propagates to neighbors-of-neighbors
-- **Layer 3-4**: Broader context and final refinement
-
-**Critical Insight**: GNN layers are refinement iterations, NOT depth limits. A 4-layer GNN can process ASTs of arbitrary depth.
-
+TBD: see `./specs/GENERATION_HEAD.md`
