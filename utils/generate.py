@@ -7,7 +7,7 @@ from dataset.grammar import sample_programs, parse_program_with_ast, get_cfg, re
 from models.generation_head import GrammarAwareGenerationHead
 
 
-def generate_with_ml_head(n: int, max_steps: int, hidden_dim: int, seed: int = None) -> List[str]:
+def generate_with_ml_head(n: int, max_steps: int, hidden_dim: int, seed: int | None = None) -> List[str]:
     """Generate programs using the ML-based grammar-aware generation head."""
     if seed is not None:
         torch.manual_seed(seed)
