@@ -462,20 +462,20 @@ class GrammarAwareGenerationHead(nn.Module):
             # Analyze which productions are possible for this non-terminal
             if current_nonterminal in self.production_head.nonterminal_to_productions:
                 possible_productions = self.production_head.nonterminal_to_productions[current_nonterminal]
-                
+
                 # Check if any possible production needs specialized heads
                 needs_identifier = False
                 needs_literal = False
                 needs_function = False
                 needs_control = False
-                
+
                 for prod_idx in possible_productions:
                     requirements = self._analyze_production_requirements(prod_idx)
                     needs_identifier |= requirements["needs_identifier"]
-                    needs_literal |= requirements["needs_literal"] 
+                    needs_literal |= requirements["needs_literal"]
                     needs_function |= requirements["needs_function"]
                     needs_control |= requirements["needs_control"]
-                
+
                 # Only call heads that are actually needed
                 if needs_identifier:
                     output["identifier"] = self.identifier_head(context_embeddings)
@@ -515,138 +515,138 @@ class GrammarAwareGenerationHead(nn.Module):
     def _analyze_production_requirements(self, production_idx: int) -> Dict[str, bool]:
         """
         Analyze a production to determine which specialized heads are needed.
-        
+
         Args:
             production_idx: Index of production rule to analyze
-            
+
         Returns:
             Dictionary indicating which heads are required for this production
         """
         if production_idx not in self.production_head.idx_to_production:
             return {"needs_identifier": False, "needs_literal": False, "needs_function": False, "needs_control": False}
-            
+
         production = self.production_head.idx_to_production[production_idx]
         rhs = production.rhs()
-        
+
         needs_identifier = False
         needs_literal = False
         needs_function = False
         needs_control = False
-        
+
         # Analyze the production's right-hand side for terminal requirements
         for symbol in rhs:
             symbol_str = str(symbol)
-            
+
             # Check for identifier requirements
             if symbol_str == "VARIABLE":
                 needs_identifier = True
-            
-            # Check for literal requirements  
+
+            # Check for literal requirements
             elif symbol_str in ["DIGIT", "STRING", "TRUE", "FALSE"]:
                 needs_literal = True
-            
+
             # Check for function call requirements
             elif symbol_str in ["SUM", "LEN", "MIN", "MAX", "RANGE", "ABS", "SORTED", "SET", "STR", "INT", "LIST"]:
                 needs_function = True
-            
+
             # Check for control flow requirements
             elif symbol_str in ["IF", "ELIF", "ELSE", "WHILE", "FOR", "BREAK", "CONTINUE"]:
                 needs_control = True
-        
+
         return {
             "needs_identifier": needs_identifier,
-            "needs_literal": needs_literal, 
+            "needs_literal": needs_literal,
             "needs_function": needs_function,
             "needs_control": needs_control
         }
 
-    def _apply_smart_production_selection(self, production_logits: torch.Tensor, 
-                                        current_nonterminal: Nonterminal, 
+    def _apply_smart_production_selection(self, production_logits: torch.Tensor,
+                                        current_nonterminal: Nonterminal,
                                         current_steps: int, max_steps: int) -> torch.Tensor:
         """
         Apply smart heuristics for production selection to avoid infinite recursion.
-        
+
         Args:
             production_logits: Raw logits from production head
             current_nonterminal: The non-terminal being expanded
             current_steps: Current number of expansion steps
             max_steps: Maximum allowed steps
-            
+
         Returns:
             Adjusted probability distribution for production selection
         """
         # Start with softmax of original logits
         probs = F.softmax(production_logits, dim=-1)
-        
+
         # Get valid productions for this non-terminal
         if current_nonterminal not in self.production_head.nonterminal_to_productions:
             return probs
-            
+
         valid_indices = self.production_head.nonterminal_to_productions[current_nonterminal]
-        
+
         # Analyze each valid production
         terminal_production_indices = []
         recursive_production_indices = []
-        
+
         for idx in valid_indices:
             if idx >= len(probs) or idx not in self.production_head.idx_to_production:
                 continue
-                
+
             production = self.production_head.idx_to_production[idx]
             rhs = production.rhs()
-            
+
             # Check if production contains the same non-terminal (recursive)
             is_recursive = current_nonterminal in rhs
-            
+
             # Check if production leads to terminals (no non-terminals in RHS)
             has_nonterminals = any(isinstance(symbol, Nonterminal) for symbol in rhs)
-            
+
             if is_recursive:
                 recursive_production_indices.append(idx)
             elif not has_nonterminals:
                 terminal_production_indices.append(idx)
-        
+
         # Apply bias based on current step count and available options
         bias_factor = min(current_steps / max_steps, 0.9)  # Increase bias as we approach max_steps
-        
+
         # Create adjusted probabilities
         adjusted_probs = probs.clone()
-        
+
         if len(terminal_production_indices) > 0:
             # Boost terminal productions when we're deep in expansion
             boost_factor = 1.0 + bias_factor * 3.0  # Up to 4x boost for terminal productions
             for idx in terminal_production_indices:
                 if idx < len(adjusted_probs):
                     adjusted_probs[idx] *= boost_factor
-        
+
         if len(recursive_production_indices) > 0:
-            # Penalize recursive productions when we're deep in expansion  
+            # Penalize recursive productions when we're deep in expansion
             penalty_factor = max(0.1, 1.0 - bias_factor * 2.0)  # Down to 0.1x for recursive productions
             for idx in recursive_production_indices:
                 if idx < len(adjusted_probs):
                     adjusted_probs[idx] *= penalty_factor
-        
+
         # Renormalize
         adjusted_probs = adjusted_probs / adjusted_probs.sum()
-        
+
         return adjusted_probs
 
-    def _process_terminal(self, terminal_symbol: Union[str, Nonterminal], 
-                         hidden_state: torch.Tensor, 
+    def _process_terminal(self, terminal_symbol: Union[str, Nonterminal],
+                         hidden_state: torch.Tensor,
                          context_identifiers: List[str]) -> Optional[str]:
         """
         Standardized terminal symbol processing using appropriate specialized heads.
-        
+
         Args:
-            terminal_symbol: Terminal symbol to process  
+            terminal_symbol: Terminal symbol to process
             hidden_state: Current hidden state
             context_identifiers: Available identifiers for copy mechanism
-            
+
         Returns:
             Generated token string, or None if processing failed
         """
         terminal_str = str(terminal_symbol)
-        
+
         try:
             # Route to appropriate head based on terminal type
             if terminal_str == "VARIABLE":
@@ -654,11 +654,11 @@ class GrammarAwareGenerationHead(nn.Module):
                 id_output = self.identifier_head(hidden_state, context_identifiers)
                 sampled_ids = self.identifier_head.sample_identifier(id_output)
                 return sampled_ids[0] if sampled_ids else "a"  # Fallback to 'a'
-                
+
             elif terminal_str in ["DIGIT", "STRING", "TRUE", "FALSE"]:
                 # Use literal head with type-aware generation
                 lit_output = self.literal_head(hidden_state)
-                
+
                 # Override the type selection based on the specific terminal requested
                 if terminal_str == "DIGIT":
                     # Force integer type
@@ -669,24 +669,24 @@ class GrammarAwareGenerationHead(nn.Module):
                 elif terminal_str in ["TRUE", "FALSE"]:
                     # Force boolean type
                     lit_output['type'] = torch.tensor([[-10.0, -10.0, 10.0]] * hidden_state.size(0))
-                
+
                 sampled_lits = self.literal_head.sample_literal(lit_output)
                 return sampled_lits[0] if sampled_lits else "0"  # Fallback to '0'
-                
+
             elif terminal_str in ["SUM", "LEN", "MIN", "MAX", "RANGE", "ABS", "SORTED", "SET", "STR", "INT", "LIST"]:
                 # Use function call head for built-in functions
                 # For now, just use the mapped token - could be enhanced later
                 return self._map_terminal_to_token(terminal_str)
-                
+
             elif terminal_str in ["IF", "ELIF", "ELSE", "WHILE", "FOR", "BREAK", "CONTINUE"]:
                 # Use control flow head for control keywords
                 # For now, just use the mapped token - could be enhanced later
                 return self._map_terminal_to_token(terminal_str)
-                
+
             else:
                 # Regular terminal - use token pattern mapping
                 return self._map_terminal_to_token(terminal_str)
-                
+
         except Exception:
             # Fallback to token mapping if specialized head fails
             return self._map_terminal_to_token(terminal_str)
@@ -730,11 +730,11 @@ class GrammarAwareGenerationHead(nn.Module):
                     terminal_token = self._process_terminal(current_symbol, hidden_state, context_identifiers)
                     if terminal_token is not None:
                         terminals.append(terminal_token)
-                        
+
                         # Update context for identifiers
                         if str(current_symbol) == "VARIABLE" and terminal_token not in context_identifiers:
                             context_identifiers.append(terminal_token)
-                    
+
                     continue
 
                 # Handle non-terminal expansion
@@ -779,29 +779,29 @@ class GrammarAwareGenerationHead(nn.Module):
                 # Try to complete with minimal expansions for remaining non-terminals
                 remaining_steps = min(20, len(expansion_stack))  # Give a few more steps to complete
                 completion_steps = 0
-                
+
                 while expansion_stack and completion_steps < remaining_steps:
                     completion_steps += 1
                     current_symbol = expansion_stack.pop()
-                    
+
                     if not isinstance(current_symbol, Nonterminal):
                         # It's a terminal - use standardized processing
                         terminal_token = self._process_terminal(current_symbol, hidden_state, context_identifiers)
                         if terminal_token is not None:
                             terminals.append(terminal_token)
-                            
+
                             # Update context for identifiers
                             if str(current_symbol) == "VARIABLE" and terminal_token not in context_identifiers:
                                 context_identifiers.append(terminal_token)
                         continue
-                    
+
                     # Try to find a minimal expansion for this non-terminal
                     if current_symbol in self.production_head.nonterminal_to_productions:
                         valid_productions = self.production_head.nonterminal_to_productions[current_symbol]
                         # Use first production (often the simplest)
                         production_idx = valid_productions[0]
                         expansion = self.expand_production(production_idx)
-                        
+
                         # Add symbols in reverse order
                         for symbol in reversed(expansion):
                             expansion_stack.append(symbol)
