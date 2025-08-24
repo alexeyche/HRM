@@ -124,8 +124,12 @@ class ASTAutoencoder(nn.Module):
         generated_programs = []
         generation_info = []
 
+        # Convert 2D latent to 3D format expected by generation head
+        # (batch_size, hidden_dim) -> (batch_size, 1, hidden_dim)
+        context_embeddings_3d = latent.unsqueeze(1)
+        
         result = self.decoder.generate_program(
-            context_embeddings=latent,
+            context_embeddings=context_embeddings_3d,
             max_steps=max_steps
         )
 
