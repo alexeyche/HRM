@@ -4,40 +4,91 @@ import argparse
 import json
 import os
 import random
-from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
-import numpy as np
+import torch
+from torch_geometric.data import Data
 
 # Local imports
-from dataset.programs import get_program_registry, ProgramSpecification
-from dataset.ast import ASTSimplifier
-from dataset.encoding import GraphEncoder, collate_encoded_graphs
-from dataset.grammar_actions import simplified_ast_to_graph, graph_to_actions, Action
+from dataset.programs import get_program_registry, ProgramSpecification, ProgramRegistry
+from dataset.graph_dataset import ProgramGraphDataset
+
+
+def _data_to_dict(data: Data) -> Dict[str, Any]:
+    """Convert PyTorch Geometric Data object to a safe dictionary for serialization."""
+    data_dict = {}
+    
+    # Get all attributes from the Data object
+    for key, value in data.items():
+        data_dict[key] = value
+    
+    # Also capture any additional attributes that might not be in the main storage
+    # Skip computed properties that might fail on empty objects
+    skip_attrs = {
+        'node_offsets', 'edge_offsets', 'batch', 'ptr', 'face', 'edge_weight',
+        'pos', 'norm', 'train_mask', 'val_mask', 'test_mask'
+    }
+    
+    for attr_name in dir(data):
+        if (not attr_name.startswith('_') and 
+            attr_name not in data_dict and 
+            attr_name not in skip_attrs and
+            not callable(getattr(data, attr_name, None))):
+            
+            try:
+                attr_value = getattr(data, attr_name)
+                # Only store tensor, string, int, float, bool, or None values
+                if isinstance(attr_value, (torch.Tensor, str, int, float, bool, type(None))):
+                    data_dict[attr_name] = attr_value
+            except (TypeError, AttributeError, RuntimeError):
+                # Skip attributes that can't be accessed safely
+                continue
+    
+    return data_dict
+
+
+def _make_info_safe(info: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert program info dictionary to contain only basic Python types."""
+    from dataset.programs import Example
+    
+    safe_info = {}
+    for key, value in info.items():
+        if key == 'examples' and isinstance(value, list):
+            # Convert Example objects to dictionaries
+            safe_examples = []
+            for example in value:
+                if isinstance(example, Example):
+                    safe_examples.append({
+                        'input': example.input,
+                        'output': example.output
+                    })
+                else:
+                    safe_examples.append(example)
+            safe_info[key] = safe_examples
+        else:
+            # Keep other values as-is (they should be basic types)
+            safe_info[key] = value
+    
+    return safe_info
+
+
+def _dict_to_data(data_dict: Dict[str, Any]) -> Data:
+    """Convert a dictionary back to PyTorch Geometric Data object."""
+    # Create new Data object
+    data = Data()
+    
+    # Set all attributes from the dictionary
+    for key, value in data_dict.items():
+        setattr(data, key, value)
+    
+    return data
 
 
 def _random_identifier_pool() -> List[str]:
-    base = [
-        "x", "y", "z", "u", "v", "w",
-        "a", "b", "c", "d", "e", "f",
-        "i", "j", "k", "m", "n", "t",
-        "arr", "vals", "nums", "seq", "data",
-    ]
-    # Add suffix variants to enlarge pool
-    pool: List[str] = []
-    for name in base:
-        pool.append(name)
-        for s in (1, 2, 3):
-            pool.append(f"{name}{s}")
-    # Deduplicate while preserving order
-    seen = set()
-    out: List[str] = []
-    for p in pool:
-        if p not in seen:
-            out.append(p)
-            seen.add(p)
-    return out
+    """Generate pool of single-letter variable names compatible with grammar.py"""
+    # Only single-letter names to match grammar.py VARIABLE definition
+    return [chr(c) for c in range(ord('a'), ord('z') + 1)]
 
 
 def _augment_code_parameter_names(code: str, seed: int) -> str:
@@ -132,115 +183,151 @@ def _augment_code_parameter_names(code: str, seed: int) -> str:
     return new_code
 
 
-def _action_to_jsonable(a: Action) -> Dict[str, Any]:
-    return {"kind": str(a.kind), "value": a.value}
-
-
 def generate_program_dataset(output_dir: str, num_samples: int = 200, seed: int = 123) -> None:
-    rng = random.Random(seed)
+    """Generate a materialized program dataset with graph representations.
+
+    Creates a dataset directory with:
+    - Individual .pt files for each graph-program pair
+    - metadata.json with dataset statistics and information
+    """
     os.makedirs(output_dir, exist_ok=True)
 
-    # Registry of small programs
+    # Create a custom registry with code augmentation
     registry = get_program_registry()
-    names = registry.list_names()
-    if not names:
-        raise RuntimeError("No programs found in registry")
+    augmented_registry = _create_augmented_registry(registry, num_samples, seed)
 
-    # Encodings holder to collate at the end
-    encoder = GraphEncoder()
-    encoded_graphs = []
-
-    samples_path = Path(output_dir) / "samples.jsonl"
-    with samples_path.open("w", encoding="utf-8") as f:
-        for idx in range(num_samples):
-            # Pick a spec uniformly
-            spec_name = rng.choice(names)
-            spec: ProgramSpecification = registry.get(spec_name)  # type: ignore[assignment]
-            assert spec is not None
-
-            base_code = spec.implementation
-            # Augment deterministically based on idx and seed
-            aug_code = _augment_code_parameter_names(base_code, seed=seed + idx)
-
-            # Build two graphs: full AST for encoding and simplified one for actions
-            try:
-                ast_graph = ASTSimplifier.ast_to_graph(aug_code)
-            except Exception:
-                # If reconstruction fails for some edge case, fall back to original code
-                ast_graph = ASTSimplifier.ast_to_graph(base_code)
-
-            try:
-                simp_graph = simplified_ast_to_graph(aug_code)
-            except Exception:
-                simp_graph = simplified_ast_to_graph(base_code)
-
-            # Actions
-            actions: List[Action] = graph_to_actions(simp_graph)
-            actions_json = [_action_to_jsonable(a) for a in actions]
-
-            # Encode for GNN
-            enc = encoder.encode(ast_graph)
-            encoded_graphs.append(enc)
-
-            # Persist JSONL record (compact for readability)
-            record: Dict[str, Any] = {
-                "id": idx,
-                "program_name": spec_name,
-                "code": aug_code,
-                "actions": actions_json,
-                # For compactness, store counts not full arrays for graphs; graphs are recoverable from code
-                "num_nodes": len(ast_graph["nodes"]),
-                "num_edges": len(ast_graph["edges"]),
-            }
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-    # Collate encodings and save as NPZ for fast training loads
-    batched = collate_encoded_graphs(encoded_graphs)
-    npz_path = Path(output_dir) / "encoded.npz"
-    np.savez_compressed(
-        npz_path,
-        node_type=batched.node_type,
-        op_id=batched.op_id,
-        ctx_id=batched.ctx_id,
-        dtype_id=batched.dtype_id,
-        function_name_id=batched.function_name_id,
-        attribute_name_id=batched.attribute_name_id,
-        var_id=batched.var_id,
-        const_exact_int_id=batched.const_exact_int_id,
-        list_firstk_ids=batched.list_firstk_ids,
-        list_firstk_mask=batched.list_firstk_mask,
-        const_numeric=batched.const_numeric,
-        str_numeric=batched.str_numeric,
-        list_summary=batched.list_summary,
-        position=batched.position,
-        edge_index=batched.edge_index,
-        edge_type=batched.edge_type,
-        graph_id=batched.graph_id,
-        node_ptr=batched.node_ptr,
-        num_graphs=np.array([batched.num_graphs], dtype=np.int64),
+    # Create dataset with augmented programs
+    dataset = ProgramGraphDataset(
+        registry=augmented_registry,
+        programs_per_spec=1,  # Each augmented program is unique
+        examples_per_program=3,
+        seed=seed,
+        cache_dir=None  # We'll save manually
     )
 
-    # Save a tiny manifest
-    manifest = {
-        "num_samples": num_samples,
-        "source_programs": names,
-        "samples_jsonl": str(samples_path.name),
-        "encoded_npz": str(npz_path.name),
-        "notes": "Each JSONL record contains augmented code and action sequence; tensors are in encoded.npz",
+    print(f"Generated dataset with {len(dataset)} items")
+
+    # Save each item as individual .pt file
+    graphs_dir = Path(output_dir) / "graphs"
+    graphs_dir.mkdir(exist_ok=True)
+
+    metadata = {
+        "num_samples": len(dataset),
+        "seed": seed,
+        "examples_per_program": dataset.examples_per_program,
+        "program_stats": dataset.get_statistics(),
+        "files": []
     }
-    with open(Path(output_dir) / "manifest.json", "w", encoding="utf-8") as mf:
-        json.dump(manifest, mf, indent=2)
+
+    for idx in range(len(dataset)):
+        graph, info = dataset[idx]
+
+        # Save graph and info
+        filename = f"sample_{idx:06d}.pt"
+        filepath = graphs_dir / filename
+
+        # Convert Data object to safe dictionary for serialization
+        graph_dict = _data_to_dict(graph)
+        safe_info = _make_info_safe(info)
+        
+        torch.save({
+            'graph_dict': graph_dict,
+            'info': safe_info,
+            'index': idx
+        }, filepath)
+
+        metadata["files"].append({
+            "filename": filename,
+            "spec_name": info["spec_name"],
+            "description": info["description"],
+            "num_nodes": graph.x.shape[0] if hasattr(graph, 'x') and graph.x is not None else 0,
+            "num_edges": graph.edge_index.shape[1] if hasattr(graph, 'edge_index') and graph.edge_index is not None else 0
+        })
+
+        if (idx + 1) % 50 == 0:
+            print(f"Processed {idx + 1}/{len(dataset)} samples")
+
+    # Save metadata
+    with open(Path(output_dir) / "metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    print(f"\nDataset saved to {output_dir}")
+    print(f"- {len(dataset)} graph files in graphs/")
+    print(f"- metadata.json with dataset information")
+
+
+def _create_augmented_registry(base_registry: ProgramRegistry, num_samples: int, seed: int) -> ProgramRegistry:
+    """Create a new registry with code-augmented programs."""
+
+    rng = random.Random(seed)
+    augmented_registry = ProgramRegistry()
+
+    names = base_registry.list_names()
+    if not names:
+        raise RuntimeError("No programs found in base registry")
+
+    # Generate augmented programs
+    for idx in range(num_samples):
+        # Pick a spec uniformly
+        spec_name = rng.choice(names)
+        base_spec = base_registry.get(spec_name)
+        assert base_spec is not None
+
+        # Augment the code
+        augmented_code = _augment_code_parameter_names(
+            base_spec.implementation,
+            seed=seed + idx
+        )
+
+        # Create new spec with augmented code
+        aug_spec = ProgramSpecification(
+            name=f"{spec_name}_aug_{idx:06d}",
+            description=base_spec.description,
+            inputs=base_spec.inputs,
+            outputs=base_spec.outputs,
+            implementation=augmented_code,
+            base_examples=base_spec.base_examples
+        )
+
+        augmented_registry.register(aug_spec)
+
+    return augmented_registry
+
+
+def load_sample(filepath: str) -> tuple[Data, Dict[str, Any], int]:
+    """Load a single sample from a .pt file with safe Data reconstruction.
+    
+    Args:
+        filepath: Path to the .pt file
+        
+    Returns:
+        Tuple of (Data object, program info dict, sample index)
+    """
+    # Load with weights_only=True for security (no unsafe globals needed)
+    saved_data = torch.load(filepath, weights_only=True)
+    
+    # Reconstruct Data object from dictionary
+    graph = _dict_to_data(saved_data['graph_dict'])
+    info = saved_data['info']
+    index = saved_data['index']
+    
+    return graph, info, index
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate a small program dataset (code, actions, encodings)")
+    parser = argparse.ArgumentParser(description="Generate a materialized program graph dataset")
     parser.add_argument("--out", type=str, default="data/programs-200", help="Output directory")
     parser.add_argument("--n", type=int, default=200, help="Number of samples to generate")
     parser.add_argument("--seed", type=int, default=123, help="Random seed")
     args = parser.parse_args()
 
     generate_program_dataset(args.out, num_samples=args.n, seed=args.seed)
-    print(f"Saved dataset to {args.out}")
+
+
+__all__ = [
+    'generate_program_dataset',
+    'load_sample'
+]
 
 
 if __name__ == "__main__":
