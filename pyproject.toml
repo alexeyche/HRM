@@ -33,6 +33,7 @@ dependencies = [
     "nltk>=3.9.1",
     "anytree>=2.12.1",
     "rich>=14.1.0",
+    "matplotlib>=3.7.5",
 ]
 
 [project.optional-dependencies]

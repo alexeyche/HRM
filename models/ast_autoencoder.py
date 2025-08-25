@@ -293,15 +293,17 @@ class ASTAutoencoderTrainer:
         self,
         original_programs: List[str],
         reconstructed_programs: List[str],
-        latent: torch.Tensor
+        latent: torch.Tensor,
+        use_generation_loss: bool = True
     ) -> Dict[str, torch.Tensor]:
         """
-        Calculate reconstruction loss.
+        Calculate reconstruction loss using proper gradient-based training.
 
         Args:
             original_programs: Original program strings
-            reconstructed_programs: Reconstructed program strings
+            reconstructed_programs: Reconstructed program strings  
             latent: Latent embeddings
+            use_generation_loss: Whether to use gradient-based generation loss
 
         Returns:
             Dictionary of loss components
@@ -337,9 +339,48 @@ class ASTAutoencoderTrainer:
         # Regularization loss on latent space
         latent_reg = torch.mean(latent ** 2)
 
-        # Combined loss
-        reconstruction_loss = 1.0 - similarity_score
-        total_loss = reconstruction_loss + 0.01 * latent_reg
+        if use_generation_loss:
+            # Use the new gradient-based loss from generation head
+            try:
+                # Convert programs to token sequences for loss computation
+                original_token_sequences = []
+                for prog in original_programs:
+                    tokens = prog.split()  # Simple tokenization for now
+                    original_token_sequences.append(tokens)
+                
+                # Compute proper generation loss with gradients
+                context_embeddings_3d = latent.unsqueeze(1)  # (batch_size, 1, hidden_dim)
+                generation_loss_dict = self.model.decoder.compute_sequence_loss(
+                    context_embeddings=context_embeddings_3d,
+                    target_tokens=original_token_sequences,
+                    temperature=1.0
+                )
+                
+                # Combine generation loss with similarity metrics
+                reconstruction_loss = generation_loss_dict["total_loss"] + (1.0 - similarity_score)
+                total_loss = reconstruction_loss + 0.01 * latent_reg
+
+                return {
+                    'total_loss': total_loss,
+                    'reconstruction_loss': reconstruction_loss,
+                    'generation_loss': generation_loss_dict["total_loss"],
+                    'production_loss': generation_loss_dict["production_loss"], 
+                    'identifier_loss': generation_loss_dict["identifier_loss"],
+                    'literal_loss': generation_loss_dict["literal_loss"],
+                    'similarity_score': similarity_score,
+                    'exact_match_rate': exact_match_rate,
+                    'latent_regularization': latent_reg
+                }
+            except Exception as e:
+                # Fallback to old loss if generation loss fails
+                print(f"Warning: Generation loss computation failed: {e}, falling back to similarity loss")
+                reconstruction_loss = 1.0 - similarity_score
+                total_loss = reconstruction_loss + 0.01 * latent_reg
+
+        else:
+            # Original loss computation
+            reconstruction_loss = 1.0 - similarity_score
+            total_loss = reconstruction_loss + 0.01 * latent_reg
 
         return {
             'total_loss': total_loss,

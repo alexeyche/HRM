@@ -134,11 +134,11 @@ def create_batches(graphs: List[Any], infos: List[Dict], batch_size: int) -> Lis
 
 def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
                    optimizer: torch.optim.Optimizer, train_batches: List[Tuple[Batch, List[Dict]]],
-                   device: str, log_interval: int = 10, epoch: int = 1, 
+                   device: str, log_interval: int = 10, epoch: int = 1,
                    use_wandb: bool = False, global_step: int = 0) -> Tuple[Dict[str, float], int]:
     """Train model for one epoch."""
     model.train()
-    
+
     # Epoch-level metrics
     total_loss = 0.0
     total_reconstruction_loss = 0.0
@@ -146,12 +146,12 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
     total_exact_match_rate = 0.0
     num_batches = 0
     num_samples = 0
-    
+
     # Step-wise metrics for running averages
     step_losses = []
     step_similarities = []
     current_step = global_step
-    
+
     # Create progress bar for training batches
     with Progress(
         SpinnerColumn(),
@@ -164,7 +164,7 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
         TimeRemainingColumn(),
         console=console
     ) as progress:
-        
+
         train_task = progress.add_task(
             f"[cyan]Epoch {epoch}",
             total=len(train_batches)
@@ -203,7 +203,7 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
                 total_exact_match_rate += loss_dict['exact_match_rate'].item()
                 num_batches += 1
                 num_samples += batch_size
-                
+
                 # Track step-wise metrics
                 step_losses.append(loss.item())
                 step_similarities.append(loss_dict['similarity_score'].item())
@@ -221,7 +221,7 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
                     # Calculate running averages for recent steps
                     recent_loss = sum(step_losses[-log_interval:]) / min(len(step_losses), log_interval)
                     recent_similarity = sum(step_similarities[-log_interval:]) / min(len(step_similarities), log_interval)
-                    
+
                     # Log to WandB if enabled (console logging is replaced by progress bar)
                     if use_wandb:
                         wandb.log({
@@ -279,12 +279,12 @@ def evaluate_model(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
             TimeElapsedColumn(),
             console=console
         ) as progress:
-            
+
             val_task = progress.add_task(
                 "[yellow]Evaluating",
                 total=len(val_batches)
             )
-            
+
             for batch_idx, (batch_graphs, batch_infos) in enumerate(val_batches):
                 batch_graphs = batch_graphs.to(device)
 
@@ -583,8 +583,8 @@ def main():
 
         # Training phase
         train_metrics, global_step = train_one_epoch(
-            model, trainer, optimizer, train_batches, device, 
-            log_interval=args.log_interval, epoch=epoch, 
+            model, trainer, optimizer, train_batches, device,
+            log_interval=args.log_interval, epoch=epoch,
             use_wandb=use_wandb, global_step=global_step
         )
 

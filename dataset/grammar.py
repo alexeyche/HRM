@@ -226,6 +226,63 @@ def get_cfg() -> CFG:
 
 
 
+def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[Tuple[Nonterminal, int]], List[Tuple[str, str]]]:
+    """
+    Parse a token sequence and map it to grammar productions and terminal requirements.
+    
+    This is a simplified mapping for loss computation - a full parser would be more complex.
+    
+    Args:
+        tokens: List of program tokens
+        grammar: CFG grammar
+        
+    Returns:
+        Tuple of (production_sequence, terminal_requirements)
+        - production_sequence: List of (nonterminal, production_idx) pairs
+        - terminal_requirements: List of (terminal_type, target_value) pairs
+    """
+    production_sequence = []
+    terminal_requirements = []
+    
+    # Build production mappings
+    production_to_idx = {}
+    for i, prod in enumerate(grammar.productions()):
+        production_to_idx[prod] = i
+    
+    # Simple heuristic mapping - this could be more sophisticated
+    # For now, we'll map common patterns
+    
+    if not tokens:
+        return production_sequence, terminal_requirements
+    
+    # Start with S -> FUNC_DEF
+    start_symbol = grammar.start()
+    start_productions = list(grammar.productions(lhs=start_symbol))
+    if start_productions:
+        production_sequence.append((start_symbol, production_to_idx[start_productions[0]]))
+    
+    # Track what we've seen
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        
+        # Map tokens to terminal requirements
+        if token in ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']:
+            terminal_requirements.append(("VARIABLE", token))
+        elif token.isdigit():
+            terminal_requirements.append(("DIGIT", token))
+        elif token in ['"', "'"] or (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
+            terminal_requirements.append(("STRING", token))
+        elif token == "True":
+            terminal_requirements.append(("TRUE", token))
+        elif token == "False":
+            terminal_requirements.append(("FALSE", token))
+        
+        i += 1
+    
+    return production_sequence, terminal_requirements
+
+
 def realize_program(tokens: Sequence[str]) -> str:
     code = []
     indent = 0
