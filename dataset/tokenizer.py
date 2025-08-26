@@ -110,7 +110,9 @@ def create_token_patterns() -> Dict[str, str]:
     digits = token_patterns.get('DIGIT', [])
     if digits:
         # Create a pattern that matches any of the allowed digits
+        # Sort by length (longest first) to ensure multi-digit numbers match correctly
         escaped_digits = [re.escape(digit) for digit in digits]
+        escaped_digits.sort(key=len, reverse=True)
         patterns['DIGIT'] = '|'.join(escaped_digits)
 
     return patterns
@@ -140,12 +142,12 @@ def tokenize_code(code: str) -> List[str]:
         # Multi-character operators first (longest first)
         'ADD_ASSIGN', 'SUB_ASSIGN', 'MUL_ASSIGN', 'DIV_ASSIGN', 'MOD_ASSIGN',
         'LTE', 'GTE', 'EQ', 'NEQ', 'POWER', 'FLOOR_DIV',
+        # Built-in functions (before keywords to avoid conflicts like int vs in)
+        'SUM', 'LEN', 'MIN', 'MAX', 'ABS', 'SORTED', 'SET', 'STR', 'INT',
         # Keywords (longest first)
         'PROGRAM_NAME', 'CONTINUE', 'RETURN',
         'WHILE', 'BREAK', 'RANGE', 'REVERSE', 'TRUE', 'FALSE',
         'DEF', 'FOR', 'AND', 'NOT', 'ELSE', 'OR', 'IF', 'IN',
-        # Built-in functions
-        'SUM', 'LEN', 'MIN', 'MAX', 'ABS', 'SORTED', 'SET', 'STR', 'INT',
         # Method names
         'APPEND', 'UPPER', 'LOWER',
         # Single character operators and punctuation
@@ -229,12 +231,10 @@ def tokenize_code(code: str) -> List[str]:
         if is_string_literal_border:
             if string_literal_start is None:
                 string_literal_start = i
-                log.info(f"Starting string literal at {i}")
                 i += 1
                 continue
             else:
                 string_literal_value = code[string_literal_start:i].strip("'").strip("\"")
-                log.info(f"Got string literal {string_literal_value}")
                 tokens.append("STRING")
                 string_literal_start = None
                 i += 1

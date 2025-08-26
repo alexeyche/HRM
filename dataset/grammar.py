@@ -14,7 +14,7 @@ from typing import Set
 def get_token_patterns() -> Dict[str, List[str]]:
     """Get token patterns from the grammar for use by the tokenizer."""
     variables = [chr(c) for c in range(ord('a'), ord('z') + 1)]
-    digits = [str(i) for i in range(0, 21)]
+    digits = [str(i) for i in range(0, 21)] + ["0.5"]
 
     terminal_rules = {
         "VARIABLE": variables,
@@ -41,7 +41,7 @@ def get_token_patterns() -> Dict[str, List[str]]:
         # operators
         "ADDOP": ["+", "-"],
         "MULOP": ["*", "/", "%"],
-        "BINARY_CMP": ["<", ">", "<=", ">=", "==", "!="],
+        "BINARY_CMP": ["<", ">", "<=", ">=", "==", "!=", "in"],
         "AND": ["and"],
         "OR": ["or"],
         "NOT": ["not"],
@@ -112,7 +112,8 @@ def get_cfg(start: str = "S") -> CFG:
         "S": ["FUNC_DEF"],
 
         # Function definition
-        "FUNC_DEF": ["DEF PROGRAM_NAME LPAREN PARAMS RPAREN COLON NEWLINE INDENT BODY DEDENT"],
+        "FUNC_DEF": ["DEF PROGRAM_NAME LPAREN PARAMS RPAREN COLON NEWLINES INDENT BODY DEDENT"],
+        "NEWLINES": ["NEWLINE", "NEWLINE NEWLINES"],
 
         # Parameters
         "PARAMS": ["VARIABLE", "VARIABLE COMMA PARAMS"],
@@ -123,9 +124,11 @@ def get_cfg(start: str = "S") -> CFG:
         "STMT_OR_BLOCK": ["STMT", "IF_BLOCK", "WHILE_LOOP", "FOR_LOOP"],
 
         # Assignment and return
-        "ASSIGNMENT": ["SIMPLE_ASSIGN", "AUGMENTED_ASSIGN"],
+        "ASSIGNMENT": ["SIMPLE_ASSIGN", "AUGMENTED_ASSIGN", "TUPLE_ASSIGN"],
         "SIMPLE_ASSIGN": ["VARIABLE EQUALS EXPR NEWLINE"],
         "AUGMENTED_ASSIGN": ["VARIABLE ASSIGN_OP EXPR NEWLINE"],
+        "TUPLE_ASSIGN": ["VARIABLE_LIST EQUALS EXPR_LIST NEWLINE"],
+        "VARIABLE_LIST": ["VARIABLE", "VARIABLE COMMA VARIABLE_LIST"],
         "ASSIGN_OP": ["ADD_ASSIGN", "SUB_ASSIGN", "MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN"],
         "STMT": ["RETURN EXPR NEWLINE"],
 
@@ -156,16 +159,18 @@ def get_cfg(start: str = "S") -> CFG:
         "TERM": ["POWER_EXPR", "TERM MULOP POWER_EXPR", "TERM FLOOR_DIV POWER_EXPR"],
         "POWER_EXPR": ["FACTOR", "FACTOR POWER POWER_EXPR"],
 
-        # Atoms
-        "FACTOR": ["VARIABLE", "DIGIT", "STRING", "LPAREN EXPR RPAREN", "FUNCTION_CALL", "LIST_LITERAL", "LIST_INDEX", "METHOD_CALL"],
+        # Atoms and unary expressions
+        "FACTOR": ["UNARY_EXPR", "VARIABLE", "DIGIT", "STRING", "TRUE", "FALSE", "LPAREN EXPR RPAREN", "FUNCTION_CALL", "LIST_LITERAL", "LIST_INDEX", "METHOD_CALL"],
+        "UNARY_EXPR": ["ADDOP FACTOR"],
 
         # List literals
         "LIST_LITERAL": ["LBRACKET LIST_CONTENTS RBRACKET"],
         "LIST_CONTENTS": ["", "EXPR_LIST"],
         "EXPR_LIST": ["EXPR", "EXPR COMMA EXPR_LIST"],
 
-        # List indexing
-        "LIST_INDEX": ["VARIABLE LBRACKET EXPR RBRACKET"],
+        # List indexing and slicing
+        "LIST_INDEX": ["VARIABLE LBRACKET EXPR RBRACKET", "FUNCTION_CALL LBRACKET SLICE RBRACKET"],
+        "SLICE": ["COLON COLON UNARY_EXPR"],
 
         # Method calls
         "METHOD_CALL": ["VARIABLE DOT METHOD_NAME LPAREN ARG_LIST RPAREN"],
@@ -190,20 +195,22 @@ def get_cfg(start: str = "S") -> CFG:
         "BOOL_VALUE": ["TRUE", "FALSE"],
         "ARG_LIST": ["", "EXPR", "EXPR COMMA ARG_LIST"],
         "RANGE_CALL": ["RANGE LPAREN RANGE_ARGS RPAREN"],
-        "RANGE_ARGS": ["SIMPLE_EXPR", "SIMPLE_EXPR COMMA SIMPLE_EXPR", "SIMPLE_EXPR COMMA SIMPLE_EXPR COMMA SIMPLE_EXPR"],
+        "RANGE_ARGS": ["EXPR", "EXPR COMMA EXPR", "EXPR COMMA EXPR COMMA EXPR"],
         "SIMPLE_EXPR": ["VARIABLE", "DIGIT", "LPAREN SIMPLE_EXPR RPAREN"],
 
         # Loop constructs - separate from function statements
         "WHILE_LOOP": ["WHILE COND COLON NEWLINE INDENT LOOP_BODY DEDENT"],
         "FOR_VARIABLE": ["VARIABLE", "UNDERSCORE"],
         "FOR_LOOP": ["FOR FOR_VARIABLE IN ITERABLE COLON NEWLINE INDENT LOOP_BODY DEDENT"],
-        "ITERABLE": ["RANGE_CALL", "VARIABLE"],
+        "ITERABLE": ["RANGE_CALL", "VARIABLE", "FUNCTION_CALL"],
         "LOOP_BODY": ["LOOP_STMT_LIST"],
         "LOOP_STMT_LIST": ["LOOP_STMT", "LOOP_STMT LOOP_STMT_LIST"],
-        "LOOP_STMT": ["ASSIGNMENT", "IF_BLOCK", "BREAK_STMT", "CONTINUE_STMT"],
+        "LOOP_STMT": ["ASSIGNMENT", "IF_BLOCK", "BREAK_STMT", "CONTINUE_STMT", "LOOP_EXPR_STMT"],
+        "LOOP_EXPR_STMT": ["METHOD_CALL NEWLINE"],
 
         # Function statements (cannot have return in loops)
-        "STMT": ["ASSIGNMENT", "RETURN_STMT"],
+        "STMT": ["ASSIGNMENT", "RETURN_STMT", "EXPR_STMT"],
+        "EXPR_STMT": ["METHOD_CALL NEWLINE"],
         "RETURN_STMT": ["RETURN EXPR NEWLINE"],
         "BREAK_STMT": ["BREAK NEWLINE"],
         "CONTINUE_STMT": ["CONTINUE NEWLINE"],
