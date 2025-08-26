@@ -25,10 +25,10 @@ def test_basic_loss_computation():
     batch_size = 2
     context_embeddings = torch.randn(batch_size, 1, hidden_dim)
     
-    # Simple target token sequences
+    # Simple target token sequences (must match grammar)
     target_tokens = [
-        ["def", "program", "a", "return", "1"],
-        ["def", "program", "b", "return", "2"]
+        ["def", "program", "(", "a", ")", ":", "return", "1"],
+        ["def", "program", "(", "b", ")", ":", "return", "2"]
     ]
     
     # Compute loss
@@ -40,7 +40,6 @@ def test_basic_loss_computation():
     assert loss_dict["total_loss"].item() >= 0.0, "Loss should be non-negative"
     
     print(f"✓ Basic loss computation works: {loss_dict['total_loss'].item():.4f}")
-    return loss_dict
 
 
 def test_gradient_flow():
@@ -55,7 +54,7 @@ def test_gradient_flow():
     optimizer = torch.optim.SGD(list(gen_head.parameters()) + list(linear.parameters()), lr=0.1)
     
     context_embeddings = linear(torch.randn(1, 1, hidden_dim))
-    target_tokens = [["def", "program", "x", "return", "5"]]
+    target_tokens = [["def", "program", "(", "x", ")", ":", "return", "5"]]
     
     # Forward pass
     loss_dict = gen_head.compute_sequence_loss(context_embeddings, target_tokens)
