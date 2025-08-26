@@ -1,4 +1,4 @@
-from dataset.grammar import get_cfg, sample_programs, parse_program_with_ast
+from dataset.grammar import get_cfg, get_parser, sample_programs, parse_program_with_ast
 from dataset.tokenizer import tokenize_code
 from nltk.parse import RecursiveDescentParser
 from dataset.programs import get_program_registry
@@ -16,9 +16,7 @@ def test_generates_parseable_programs():
 
 
 def test_parse_program():
-    grammar = get_cfg()
-
-    parser = RecursiveDescentParser(grammar)
+    parser = get_parser()
 
     code = """
     def program(a, b):
@@ -28,11 +26,11 @@ def test_parse_program():
             return b
     """
     tokens = tokenize_code(code)
-    print("Tokens:", tokens)
-
-    for tree in parser.parse(tokens):
-        print("Parse tree:", tree)
+    result = list(parser.parse(tokens))
+    assert len(result) > 0, "No parse trees found"
+    for tree in result:
         assert tree is not None
+        assert tree.height() > 0, "Parse tree has no height"
 
 
 def test_tokenize_all_programs():
@@ -50,8 +48,7 @@ def test_tokenize_all_programs():
 
 
 def test_parse_all_programs():
-    grammar = get_cfg()
-    parser = RecursiveDescentParser(grammar)
+    parser = get_parser()
 
     registry = get_program_registry()
     for program_name in registry.list_names():

@@ -6,8 +6,9 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Dict
 import random
 from nltk import CFG, Nonterminal
 from nltk.parse.generate import generate
-
+from nltk.parse.earleychart import EarleyChartParser
 from typing import Set
+
 
 
 def get_token_patterns() -> Dict[str, List[str]]:
@@ -102,7 +103,7 @@ def get_token_patterns() -> Dict[str, List[str]]:
     return terminal_rules
 
 
-def get_cfg() -> CFG:
+def get_cfg(start: str = "S") -> CFG:
     # Use shared token patterns
     terminal_rules = get_token_patterns()
 
@@ -220,24 +221,29 @@ def get_cfg() -> CFG:
 
     grammar_text = "\n".join(lines)
     grammar = CFG.fromstring(grammar_text)
-    grammar._start = Nonterminal("S")
+    # assert start in grammar._lexical_index, f"Start symbol {start} not found in grammar"
+    grammar._start = Nonterminal(start)
 
     return grammar
 
 
+def get_parser(grammar: CFG | None= None, start: str = "S") -> EarleyChartParser:
+    if grammar is None:
+        grammar = get_cfg(start)
+    return EarleyChartParser(grammar)
 
 def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[Tuple[Nonterminal, int]], List[Tuple[str, str]]]:
     """
     Parse a token sequence and map it to complete grammar derivation sequence.
-    
+
     Uses NLTK's EarleyChartParser to get the exact parse tree, then extracts
     the complete sequence of productions used in the derivation. This provides
     proper gradient signals for training the generation head.
-    
+
     Args:
         tokens: List of program tokens
         grammar: CFG grammar
-        
+
     Returns:
         Tuple of (production_sequence, terminal_requirements)
         - production_sequence: Complete list of (nonterminal, production_idx) pairs in derivation order
@@ -245,25 +251,25 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
     """
     from nltk.parse.earleychart import EarleyChartParser
     from nltk.tree import Tree
-    
+
     if not tokens:
         return [], []
-    
+
     # Build production mappings for efficient lookup
     production_to_idx = {}
     for i, prod in enumerate(grammar.productions()):
         production_to_idx[prod] = i
-    
+
     # Build token patterns for terminal classification
     token_patterns = get_token_patterns()
-    
+
     def classify_token(token: str) -> str:
         """Classify a token into its terminal type based on grammar patterns."""
         # Check direct matches in token patterns
         for terminal_type, patterns in token_patterns.items():
             if token in patterns:
                 return terminal_type
-        
+
         # Pattern-based classification
         if token.isalpha() and len(token) == 1 and token.islower():
             return "VARIABLE"
@@ -275,20 +281,20 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
             return "FALSE"
         elif (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
             return "STRING"
-        
+
         return "UNKNOWN"
-    
+
     def extract_productions_from_tree(tree: Tree) -> List[Tuple[Nonterminal, int]]:
         """Extract production sequence from parse tree in derivation order."""
         productions = []
-        
+
         def traverse_tree(node):
             if isinstance(node, Tree):
                 # This is a non-terminal node
                 label = node.label()
                 if isinstance(label, str):
                     label = Nonterminal(label)
-                
+
                 # Find the production used for this expansion
                 rhs_symbols = []
                 for child in node:
@@ -306,7 +312,7 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
                                     break
                             if found_terminal:
                                 break
-                        
+
                         if found_terminal:
                             rhs_symbols.append(found_terminal)
                         else:
@@ -319,7 +325,7 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
                                         break
                                 if rhs_symbols and str(rhs_symbols[-1]) == terminal_type:
                                     break
-                
+
                 # Find matching production
                 for prod in grammar.productions(lhs=label):
                     if len(prod.rhs()) == len(rhs_symbols):
@@ -337,36 +343,36 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
                                 else:
                                     match = False
                                     break
-                        
+
                         if match:
                             prod_idx = production_to_idx.get(prod)
                             if prod_idx is not None:
                                 productions.append((label, prod_idx))
                             break
-                
+
                 # Recursively process children
                 for child in node:
                     traverse_tree(child)
-        
+
         traverse_tree(tree)
         return productions
-    
+
     # Parse using EarleyChartParser - no fallbacks, must work precisely
     parser = EarleyChartParser(grammar)
     parse_trees = list(parser.parse(tokens))
-    
+
     if not parse_trees:
         raise ValueError(f"Failed to parse tokens {tokens} with grammar. This indicates either "
                         f"the tokens are not valid according to the grammar, or there's an issue "
                         f"with token classification. Grammar start: {grammar.start()}")
-    
+
     # Use the first parse tree (handle ambiguity by taking first)
     tree = parse_trees[0]
     production_sequence = extract_productions_from_tree(tree)
-    
+
     if not production_sequence:
         raise ValueError(f"Failed to extract production sequence from parse tree for tokens {tokens}")
-    
+
     # Build terminal requirements
     terminal_requirements = []
     for token in tokens:
@@ -375,7 +381,7 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
             raise ValueError(f"Unknown terminal type for token '{token}'. This token is not "
                            f"recognized by the grammar's token patterns.")
         terminal_requirements.append((terminal_type, token))
-    
+
     return production_sequence, terminal_requirements
 
 

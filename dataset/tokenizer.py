@@ -130,7 +130,10 @@ def tokenize_code(code: str) -> List[str]:
     tokens = []
     patterns = create_token_patterns()
 
-            # Define priority order - keywords and multi-char operators first
+    # Indentation stack to track nesting levels
+    indent_stack = [0]  # Start with no indentation
+
+    # Define priority order - keywords and multi-char operators first
     priority_order = [
         # String literals first (most specific)
         'STRING',
@@ -145,8 +148,6 @@ def tokenize_code(code: str) -> List[str]:
         'SUM', 'LEN', 'MIN', 'MAX', 'ABS', 'SORTED', 'SET', 'STR', 'INT',
         # Method names
         'APPEND', 'UPPER', 'LOWER',
-        # Special tokens
-        'NEWLINE', 'INDENT', 'DEDENT',
         # Single character operators and punctuation
         'LPAREN', 'RPAREN', 'LBRACKET', 'RBRACKET', 'COMMA', 'COLON', 'EQUALS', 'DOT',
         'ADDOP', 'MULOP', 'LT', 'GT',
@@ -165,9 +166,55 @@ def tokenize_code(code: str) -> List[str]:
 
     string_literal_start = None
     i = 0
+    at_line_start = True  # Track if we're at the beginning of a line
+
     while i < len(code):
-        # Skip whitespace
-        if code[i].isspace():
+        # Handle newlines and indentation
+        if code[i] == '\n':
+            tokens.append('<NEWLINE>')
+            i += 1
+            at_line_start = True
+            continue
+
+        # Handle indentation at the start of a line
+        if at_line_start:
+            # Count spaces at the beginning of the line
+            spaces = 0
+            j = i
+            while j < len(code) and code[j] == ' ':
+                spaces += 1
+                j += 1
+
+            # Skip empty lines and comment-only lines
+            if j < len(code) and code[j] not in ['\n', '#']:
+                current_indent = spaces
+
+                # Compare with previous indentation level
+                if current_indent > indent_stack[-1]:
+                    # Increased indentation - add INDENT token
+                    indent_stack.append(current_indent)
+                    tokens.append('<INDENT>')
+                elif current_indent < indent_stack[-1]:
+                    # Decreased indentation - add DEDENT tokens
+                    while len(indent_stack) > 1 and indent_stack[-1] > current_indent:
+                        indent_stack.pop()
+                        tokens.append('<DEDENT>')
+
+                    # Check for indentation error
+                    if current_indent != indent_stack[-1]:
+                        raise ValueError(f"Indentation error at position {i}: {current_indent} spaces doesn't match any previous indentation level")
+
+                # Skip the spaces we just processed
+                i = j
+            else:
+                # Empty line or comment line - just skip spaces
+                i = j
+
+            at_line_start = False
+            continue
+
+        # Skip non-newline whitespace (but not at line start)
+        if code[i].isspace() and code[i] != '\n':
             i += 1
             continue
 
@@ -229,6 +276,11 @@ def tokenize_code(code: str) -> List[str]:
         if not matched:
             # No token matched - raise error
             raise ValueError(f"Unexpected character '{code[i]}' at position {i}")
+
+    # Add any remaining DEDENT tokens at the end of the file
+    while len(indent_stack) > 1:
+        indent_stack.pop()
+        tokens.append('<DEDENT>')
 
     return tokens
 
