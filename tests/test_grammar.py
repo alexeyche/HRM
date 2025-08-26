@@ -50,19 +50,26 @@ def test_tokenize_all_programs():
 def test_parse_all_programs():
     parser = get_parser()
 
+    failed_programs = []
     registry = get_program_registry()
     for program_name in registry.list_names():
         program = registry.get(program_name)
         assert program is not None
 
-        log.info(f"Parsing program {program_name}: \n{program.implementation}")
+        # log.info(f"Parsing program {program_name}: \n{program.implementation}")
 
         tokens = tokenize_code(program.implementation)
-        log.info(f"Tokens: {tokens}")
+        # log.info(f"Tokens: {tokens}")
 
-        for tree in parser.parse(tokens):
-            log.info(f"Parse tree: {tree}")
-            assert tree is not None
+        try:
+            for tree in parser.parse(tokens):
+                # log.info(f"Parse tree: {tree}")
+                assert tree is not None
+        except ValueError as e:
+            failed_programs.append(f"{program_name}: \n{program.implementation}\n{e}\n")
+            continue
+
+    assert len(failed_programs) == 0, f"Failed to parse {len(failed_programs)} programs: \n{''.join(failed_programs)}"
 
 
 def test_parse_tokens_to_productions_all_programs():
