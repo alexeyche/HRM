@@ -106,14 +106,12 @@ def create_token_patterns() -> Dict[str, str]:
     if variables:
         patterns['VARIABLE'] = r'[a-zA-Z_][a-zA-Z0-9_]*'
 
-    # Handle digits (0-21)
+    # Handle digits - use a general pattern for any number (integer or float)
     digits = token_patterns.get('DIGIT', [])
     if digits:
-        # Create a pattern that matches any of the allowed digits
-        # Sort by length (longest first) to ensure multi-digit numbers match correctly
-        escaped_digits = [re.escape(digit) for digit in digits]
-        escaped_digits.sort(key=len, reverse=True)
-        patterns['DIGIT'] = '|'.join(escaped_digits)
+        # Use a general numeric pattern that matches any integer or float
+        # This will match integers like 123, 0, 99 and floats like 0.5, 3.14
+        patterns['DIGIT'] = r'\d+(?:\.\d+)?'
 
     return patterns
 
@@ -234,8 +232,9 @@ def tokenize_code(code: str) -> List[str]:
                 i += 1
                 continue
             else:
-                string_literal_value = code[string_literal_start:i].strip("'").strip("\"")
-                tokens.append("STRING")
+                # Return the actual quoted string literal instead of generic "STRING"
+                string_literal_with_quotes = code[string_literal_start:i+1]
+                tokens.append(string_literal_with_quotes)
                 string_literal_start = None
                 i += 1
                 continue

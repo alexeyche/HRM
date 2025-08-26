@@ -1713,16 +1713,13 @@ def create_default_registry() -> ProgramRegistry:
         if c < 2:
             c += 1
             continue
-
         p = True
         for i in range(2, int(c**0.5) + 1):
             if c % i == 0:
                 p = False
                 break
-
         if p:
             return c
-
         c += 1"""
     ))
 

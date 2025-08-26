@@ -14,7 +14,10 @@ from typing import Set
 def get_token_patterns() -> Dict[str, List[str]]:
     """Get token patterns from the grammar for use by the tokenizer."""
     variables = [chr(c) for c in range(ord('a'), ord('z') + 1)]
-    digits = [str(i) for i in range(0, 21)] + ["0.5"]
+    digits = [str(i) for i in range(0, 21)] + ["0.5"] + [
+        # Additional numbers used in the programs
+        "60", "70", "80", "90", "100", "400"
+    ]
 
     terminal_rules = {
         "VARIABLE": variables,
@@ -130,7 +133,6 @@ def get_cfg(start: str = "S") -> CFG:
         "TUPLE_ASSIGN": ["VARIABLE_LIST EQUALS EXPR_LIST NEWLINE"],
         "VARIABLE_LIST": ["VARIABLE", "VARIABLE COMMA VARIABLE_LIST"],
         "ASSIGN_OP": ["ADD_ASSIGN", "SUB_ASSIGN", "MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN"],
-        "STMT": ["RETURN EXPR NEWLINE"],
 
         # If/elif/else branching
         "IF_BLOCK": ["IF COND COLON NEWLINE INDENT STMT DEDENT", "IF COND COLON NEWLINE INDENT STMT DEDENT ELIF_CHAIN"],
@@ -182,7 +184,9 @@ def get_cfg(start: str = "S") -> CFG:
             "SUM LPAREN EXPR RPAREN",
             "LEN LPAREN EXPR RPAREN",
             "MIN LPAREN EXPR RPAREN",
+            "MIN LPAREN EXPR_LIST RPAREN",
             "MAX LPAREN EXPR RPAREN",
+            "MAX LPAREN EXPR_LIST RPAREN",
             "ABS LPAREN EXPR RPAREN",
             "SORTED LPAREN EXPR RPAREN",
             "SORTED LPAREN EXPR COMMA REVERSE_ARG RPAREN",
@@ -205,10 +209,16 @@ def get_cfg(start: str = "S") -> CFG:
         "ITERABLE": ["RANGE_CALL", "VARIABLE", "FUNCTION_CALL"],
         "LOOP_BODY": ["LOOP_STMT_LIST"],
         "LOOP_STMT_LIST": ["LOOP_STMT", "LOOP_STMT LOOP_STMT_LIST"],
-        "LOOP_STMT": ["ASSIGNMENT", "IF_BLOCK", "BREAK_STMT", "CONTINUE_STMT", "LOOP_EXPR_STMT"],
+        "LOOP_STMT": ["ASSIGNMENT", "LOOP_IF_BLOCK", "WHILE_LOOP", "FOR_LOOP", "BREAK_STMT", "CONTINUE_STMT", "LOOP_EXPR_STMT", "RETURN_STMT"],
         "LOOP_EXPR_STMT": ["METHOD_CALL NEWLINE"],
 
-        # Function statements (cannot have return in loops)
+        # If statements within loops (allow loop statements in body)
+        "LOOP_IF_BLOCK": ["IF COND COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT", "IF COND COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT LOOP_ELIF_CHAIN"],
+        "LOOP_ELIF_BLOCK": ["ELIF COND COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT"],
+        "LOOP_ELIF_CHAIN": ["LOOP_ELIF_BLOCK", "LOOP_ELIF_BLOCK LOOP_ELIF_CHAIN", "LOOP_ELSE_BLOCK"],
+        "LOOP_ELSE_BLOCK": ["ELSE COLON NEWLINE INDENT LOOP_STMT_LIST DEDENT"],
+
+        # Function statements
         "STMT": ["ASSIGNMENT", "RETURN_STMT", "EXPR_STMT"],
         "EXPR_STMT": ["METHOD_CALL NEWLINE"],
         "RETURN_STMT": ["RETURN EXPR NEWLINE"],

@@ -69,6 +69,7 @@ def test_parse_tokens_to_productions_all_programs():
     cfg = get_cfg()
     registry = get_program_registry()
 
+    failed_programs = []
     for program_name in registry.list_names():
         program = registry.get(program_name)
         assert program is not None
@@ -82,8 +83,8 @@ def test_parse_tokens_to_productions_all_programs():
         try:
             production_sequence, terminal_requirements = parse_tokens_to_productions(tokens, cfg)
         except ValueError as e:
-            raise AssertionError(f"Error parsing {program_name}: \n{program.implementation} \n{e}")
-
+            failed_programs.append(f"{program_name}: \n{program.implementation}\n{e}\n")
+            continue
 
         # log.info(f"Production sequence length: {len(production_sequence)}")
         # log.info(f"Terminal requirements length: {len(terminal_requirements)}")
@@ -107,3 +108,5 @@ def test_parse_tokens_to_productions_all_programs():
             assert terminal_type != "UNKNOWN", f"Terminal type should not be UNKNOWN at position {i} for {program_name}, got '{target_value}'"
 
         # log.info(f"✓ Successfully parsed {program_name} with {len(production_sequence)} productions and {len(terminal_requirements)} terminals")
+
+    assert len(failed_programs) == 0, f"Failed to parse {len(failed_programs)} programs: \n{''.join(failed_programs)}"
