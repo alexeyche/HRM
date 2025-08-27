@@ -92,7 +92,7 @@ def get_token_patterns() -> Dict[str, List[str]]:
         "FALSE": ["False"],
 
         # string literals - support both empty and non-empty strings
-        "STRING": ['""', "''", "STRING"],
+        "STRING": ['""', "''", "<STRING>"],
 
         # loops
         "WHILE": ["while"],

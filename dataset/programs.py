@@ -795,7 +795,7 @@ def create_default_registry() -> ProgramRegistry:
             Example(input=[[5, 5, 5], 5], output=True)
         ],
         implementation="""def program(a, v):
-    return a in v"""
+    return v in a"""
     ))
 
     registry.register(ProgramSpecification(

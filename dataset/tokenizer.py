@@ -234,7 +234,7 @@ def tokenize_code(code: str) -> List[str]:
             else:
                 # Return the actual quoted string literal instead of generic "STRING"
                 string_literal_with_quotes = code[string_literal_start:i+1]
-                tokens.append(string_literal_with_quotes)
+                tokens.append("<STRING>")
                 string_literal_start = None
                 i += 1
                 continue
