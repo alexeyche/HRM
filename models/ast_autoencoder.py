@@ -17,6 +17,7 @@ from models.generation_head import GrammarAwareGenerationHead
 from dataset.grammar import get_cfg
 from dataset.ast_converter import program_to_graph
 from dataset.grammar import realize_program, parse_program_with_ast
+from dataset.tokenizer import tokenize_code
 
 class ASTAutoencoder(nn.Module):
     """
@@ -127,7 +128,7 @@ class ASTAutoencoder(nn.Module):
         # Convert 2D latent to 3D format expected by generation head
         # (batch_size, hidden_dim) -> (batch_size, 1, hidden_dim)
         context_embeddings_3d = latent.unsqueeze(1)
-        
+
         result = self.decoder.generate_program(
             context_embeddings=context_embeddings_3d,
             max_steps=max_steps
@@ -294,16 +295,14 @@ class ASTAutoencoderTrainer:
         original_programs: List[str],
         reconstructed_programs: List[str],
         latent: torch.Tensor,
-        use_generation_loss: bool = True
     ) -> Dict[str, torch.Tensor]:
         """
         Calculate reconstruction loss using proper gradient-based training.
 
         Args:
             original_programs: Original program strings
-            reconstructed_programs: Reconstructed program strings  
+            reconstructed_programs: Reconstructed program strings
             latent: Latent embeddings
-            use_generation_loss: Whether to use gradient-based generation loss
 
         Returns:
             Dictionary of loss components
@@ -326,8 +325,8 @@ class ASTAutoencoderTrainer:
                 similarity_scores.append(0.0)
             else:
                 # Simple token-based similarity
-                orig_tokens = set(orig.split())
-                recon_tokens = set(recon.split())
+                orig_tokens = set(tokenize_code(orig))
+                recon_tokens = set(tokenize_code(recon))
                 if not orig_tokens:
                     similarity_scores.append(0.0)
                 else:
@@ -339,52 +338,31 @@ class ASTAutoencoderTrainer:
         # Regularization loss on latent space
         latent_reg = torch.mean(latent ** 2)
 
-        if use_generation_loss:
-            # Use the new gradient-based loss from generation head
-            try:
-                # Convert programs to token sequences for loss computation
-                original_token_sequences = []
-                for prog in original_programs:
-                    tokens = prog.split()  # Simple tokenization for now
-                    original_token_sequences.append(tokens)
-                
-                # Compute proper generation loss with gradients
-                context_embeddings_3d = latent.unsqueeze(1)  # (batch_size, 1, hidden_dim)
-                generation_loss_dict = self.model.decoder.compute_sequence_loss(
-                    context_embeddings=context_embeddings_3d,
-                    target_tokens=original_token_sequences,
-                    temperature=1.0
-                )
-                
-                # Combine generation loss with similarity metrics
-                reconstruction_loss = generation_loss_dict["total_loss"] + (1.0 - similarity_score)
-                total_loss = reconstruction_loss + 0.01 * latent_reg
+        # Convert programs to token sequences for loss computation
+        original_token_sequences = []
+        for prog in original_programs:
+            tokens = tokenize_code(prog)
+            original_token_sequences.append(tokens)
 
-                return {
-                    'total_loss': total_loss,
-                    'reconstruction_loss': reconstruction_loss,
-                    'generation_loss': generation_loss_dict["total_loss"],
-                    'production_loss': generation_loss_dict["production_loss"], 
-                    'identifier_loss': generation_loss_dict["identifier_loss"],
-                    'literal_loss': generation_loss_dict["literal_loss"],
-                    'similarity_score': similarity_score,
-                    'exact_match_rate': exact_match_rate,
-                    'latent_regularization': latent_reg
-                }
-            except Exception as e:
-                # Fallback to old loss if generation loss fails
-                print(f"Warning: Generation loss computation failed: {e}, falling back to similarity loss")
-                reconstruction_loss = 1.0 - similarity_score
-                total_loss = reconstruction_loss + 0.01 * latent_reg
+        # Compute proper generation loss with gradients
+        context_embeddings_3d = latent.unsqueeze(1)  # (batch_size, 1, hidden_dim)
+        generation_loss_dict = self.model.decoder.compute_sequence_loss(
+            context_embeddings=context_embeddings_3d,
+            target_tokens=original_token_sequences,
+            temperature=1.0
+        )
 
-        else:
-            # Original loss computation
-            reconstruction_loss = 1.0 - similarity_score
-            total_loss = reconstruction_loss + 0.01 * latent_reg
+        # Combine generation loss with similarity metrics
+        reconstruction_loss = generation_loss_dict["total_loss"] + (1.0 - similarity_score)
+        total_loss = reconstruction_loss + 0.01 * latent_reg
 
         return {
             'total_loss': total_loss,
             'reconstruction_loss': reconstruction_loss,
+            'generation_loss': generation_loss_dict["total_loss"],
+            'production_loss': generation_loss_dict["production_loss"],
+            'identifier_loss': generation_loss_dict["identifier_loss"],
+            'literal_loss': generation_loss_dict["literal_loss"],
             'similarity_score': similarity_score,
             'exact_match_rate': exact_match_rate,
             'latent_regularization': latent_reg
