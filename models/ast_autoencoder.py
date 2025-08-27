@@ -365,7 +365,6 @@ class ASTAutoencoderTrainer:
             'literal_loss': generation_loss_dict["literal_loss"],
             'similarity_score': similarity_score,
             'exact_match_rate': exact_match_rate,
-            'latent_regularization': latent_reg
         }
 
 

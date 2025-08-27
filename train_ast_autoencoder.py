@@ -27,7 +27,7 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
-
+from collections import defaultdict
 import numpy as np
 import torch
 # import torch.nn.functional as F  # Currently unused
@@ -141,15 +141,13 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
     # Epoch-level metrics
     total_loss = 0.0
-    total_reconstruction_loss = 0.0
-    total_similarity_score = 0.0
-    total_exact_match_rate = 0.0
+
+    loss_components = defaultdict(float)
     num_batches = 0
     num_samples = 0
 
     # Step-wise metrics for running averages
-    step_losses = []
-    step_similarities = []
+    step_losses = defaultdict(list)
     current_step = global_step
 
     # Create progress bar for training batches
@@ -198,15 +196,16 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
                 # Accumulate epoch metrics
                 total_loss += loss.item()
-                total_reconstruction_loss += loss_dict['reconstruction_loss'].item()
-                total_similarity_score += loss_dict['similarity_score'].item()
-                total_exact_match_rate += loss_dict['exact_match_rate'].item()
+                for key, value in loss_dict.items():
+                    if key == 'total_loss':
+                        continue
+                    loss_components[key] += value.item()
                 num_batches += 1
                 num_samples += batch_size
 
                 # Track step-wise metrics
-                step_losses.append(loss.item())
-                step_similarities.append(loss_dict['similarity_score'].item())
+                for key, value in loss_dict.items():
+                    step_losses[key].append(value.item())
                 current_step += 1
 
                 # Update progress bar with current metrics
@@ -219,17 +218,21 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
                 # Step-wise logging (reduced frequency when using progress bar)
                 if (batch_idx + 1) % log_interval == 0:
                     # Calculate running averages for recent steps
-                    recent_loss = sum(step_losses[-log_interval:]) / min(len(step_losses), log_interval)
-                    recent_similarity = sum(step_similarities[-log_interval:]) / min(len(step_similarities), log_interval)
+                    recent_losses = {}
+                    for key, values in step_losses.items():
+                        recent_loss = sum(values[-log_interval:]) / min(len(values), log_interval)
+                        recent_losses[key] = recent_loss
 
                     # Log to WandB if enabled (console logging is replaced by progress bar)
                     if use_wandb:
                         wandb.log({
                             "step": current_step,
                             "epoch": epoch,
-                            "train/step_loss": recent_loss,
-                            "train/step_similarity": recent_similarity,
                             "train/step_batch_idx": batch_idx + 1,
+                            **{
+                                f"train/step_{key}": recent_losses[key]
+                                for key in recent_losses
+                            },
                         })
 
             except Exception as e:
@@ -240,11 +243,14 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
         return {}, current_step
 
     return {
-        "train/loss": total_loss / num_batches,
-        "train/reconstruction_loss": total_reconstruction_loss / num_batches,
-        "train/similarity_score": total_similarity_score / num_batches,
-        "train/exact_match_rate": total_exact_match_rate / num_batches,
-        "train/samples": num_samples,
+        **{
+            "train/loss": total_loss / num_batches,
+            "train/samples": num_samples,
+        },
+        **{
+            f"train/{key}": value / num_batches
+            for key, value in loss_components.items()
+        }
     }, current_step
 
 
@@ -255,9 +261,7 @@ def evaluate_model(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
     # Metrics tracking
     total_loss = 0.0
-    total_reconstruction_loss = 0.0
-    total_similarity_score = 0.0
-    total_exact_match_rate = 0.0
+    loss_components = defaultdict(float)
     num_batches = 0
 
     # Program evaluation metrics
@@ -302,9 +306,10 @@ def evaluate_model(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
                     # Accumulate loss metrics
                     total_loss += loss_dict['total_loss'].item()
-                    total_reconstruction_loss += loss_dict['reconstruction_loss'].item()
-                    total_similarity_score += loss_dict['similarity_score'].item()
-                    total_exact_match_rate += loss_dict['exact_match_rate'].item()
+                    for key, value in loss_dict.items():
+                        if key == 'total_loss':
+                            continue
+                        loss_components[key] += value.item()
                     num_batches += 1
 
                     # Evaluate each reconstructed program
@@ -347,15 +352,18 @@ def evaluate_model(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
     all_examples_rate = programs_with_all_examples / max(total_programs, 1)
 
     return {
-        "val/loss": total_loss / num_batches,
-        "val/reconstruction_loss": total_reconstruction_loss / num_batches,
-        "val/similarity_score": total_similarity_score / num_batches,
-        "val/exact_match_rate": total_exact_match_rate / num_batches,
-        "val/compilation_rate": compilation_rate,
-        "val/one_example_rate": one_example_rate,
-        "val/all_examples_rate": all_examples_rate,
-        "val/programs_evaluated": total_programs,
-        "val/programs_compiled": compiled_programs,
+        **{
+            f"val/{key}": value / num_batches
+            for key, value in loss_components.items()
+        },
+        **{
+            "val/loss": total_loss / num_batches,
+            "val/compilation_rate": compilation_rate,
+            "val/one_example_rate": one_example_rate,
+            "val/all_examples_rate": all_examples_rate,
+            "val/programs_evaluated": total_programs,
+            "val/programs_compiled": compiled_programs,
+        }
     }
 
 
@@ -589,9 +597,14 @@ def main():
         )
 
         if train_metrics:
-            console.print(f"[green]✓[/green] Epoch {epoch} - Train loss: {train_metrics['train/loss']:.4f}, "
-                         f"Similarity: {train_metrics['train/similarity_score']:.4f}, "
-                         f"Exact match: {train_metrics['train/exact_match_rate']:.4f}")
+            console.print(
+                f"[green]✓[/green] Epoch {epoch} - Train loss: {train_metrics['train/loss']:.4f}, "
+                f"Similarity: {train_metrics['train/similarity_score']:.4f}, "
+                f"Exact match: {train_metrics['train/exact_match_rate']:.4f}"
+                f"Production: {train_metrics['train/production_loss']:.4f}, "
+                f"Identifier: {train_metrics['train/identifier_loss']:.4f}, "
+                f"Literal: {train_metrics['train/literal_loss']:.4f}"
+            )
         else:
             console.print(f"[red]⚠[/red] No successful training batches in epoch {epoch}")
 
@@ -602,6 +615,9 @@ def main():
 
             if val_metrics:
                 console.print(f"[blue]ⓘ[/blue] Epoch {epoch} - Val loss: {val_metrics['val/loss']:.4f}, "
+                              f"Production: {val_metrics['val/production_loss']:.4f}, "
+                              f"Identifier: {val_metrics['val/identifier_loss']:.4f}, "
+                              f"Literal: {val_metrics['val/literal_loss']:.4f}, "
                               f"Compilation: {val_metrics['val/compilation_rate']:.3f}, "
                               f"One example: {val_metrics['val/one_example_rate']:.3f}, "
                               f"All examples: {val_metrics['val/all_examples_rate']:.3f}")
