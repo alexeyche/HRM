@@ -2,6 +2,7 @@ from dataset.grammar import get_cfg, get_parser, sample_programs, parse_program_
 from dataset.tokenizer import tokenize_code
 from nltk.parse import RecursiveDescentParser
 from dataset.programs import get_program_registry
+from dataset.augment_programs import augment_registry
 import logging
 import pytest
 
@@ -74,7 +75,8 @@ def test_parse_all_programs():
 
 def test_parse_tokens_to_productions_all_programs():
     cfg = get_cfg()
-    registry = get_program_registry()
+    registry = augment_registry(get_program_registry(), num_samples=500, seed=42)
+    # registry = get_program_registry()
 
     failed_programs = []
     for program_name in registry.list_names():

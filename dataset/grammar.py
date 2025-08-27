@@ -168,7 +168,7 @@ def get_cfg(start: str = "S") -> CFG:
         # List literals
         "LIST_LITERAL": ["LBRACKET LIST_CONTENTS RBRACKET"],
         "LIST_CONTENTS": ["", "EXPR_LIST"],
-        "EXPR_LIST": ["EXPR", "EXPR COMMA EXPR_LIST"],
+        "EXPR_LIST": ["EXPR", "EXPR COMMA EXPR_LIST", "LPAREN EXPR_LIST RPAREN"],
 
         # List indexing and slicing
         "LIST_INDEX": ["VARIABLE LBRACKET EXPR RBRACKET", "FUNCTION_CALL LBRACKET SLICE RBRACKET"],
