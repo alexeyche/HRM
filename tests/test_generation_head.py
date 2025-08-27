@@ -716,16 +716,16 @@ class TestSmartProductionSelection:
         """Test that smart production selection returns valid probabilities."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Create sample logits for a non-terminal
         production_logits = torch.randn(len(gen_head.production_head.production_to_idx))
         nonterminal = sample_grammar.start()
-        
+
         # Test smart selection
         adjusted_probs = gen_head._apply_smart_production_selection(
             production_logits, nonterminal, current_steps=5, max_steps=50
         )
-        
+
         # Should be valid probability distribution
         assert adjusted_probs.dim() == 1
         assert torch.allclose(adjusted_probs.sum(), torch.tensor(1.0), atol=1e-6)
@@ -734,47 +734,47 @@ class TestSmartProductionSelection:
     def test_recursive_production_bias(self, sample_grammar):
         """Test that recursive productions are penalized when deep in expansion."""
         from nltk import Nonterminal
-        
+
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Use NOT_EXPR which has recursive production: NOT_EXPR -> NOT NOT_EXPR
         not_expr = Nonterminal('NOT_EXPR')
         if not_expr not in gen_head.production_head.nonterminal_to_productions:
             pytest.skip("NOT_EXPR not found in grammar")
-        
+
         # Create uniform logits
         num_productions = len(gen_head.production_head.production_to_idx)
         uniform_logits = torch.zeros(num_productions)
-        
+
         # Test early in expansion (should allow recursion)
         early_probs = gen_head._apply_smart_production_selection(
             uniform_logits, not_expr, current_steps=1, max_steps=50
         )
-        
+
         # Test late in expansion (should penalize recursion)
         late_probs = gen_head._apply_smart_production_selection(
             uniform_logits, not_expr, current_steps=45, max_steps=50
         )
-        
+
         # Get indices for NOT_EXPR productions
         valid_indices = gen_head.production_head.nonterminal_to_productions[not_expr]
-        
+
         # Find recursive vs non-recursive productions
         recursive_idx = None
         non_recursive_idx = None
-        
+
         for idx in valid_indices:
             production = gen_head.production_head.idx_to_production[idx]
             if not_expr in production.rhs():  # Recursive
                 recursive_idx = idx
             else:
                 non_recursive_idx = idx
-        
+
         if recursive_idx is not None and non_recursive_idx is not None:
             # Late in expansion, non-recursive should be favored over recursive
             assert late_probs[non_recursive_idx] > late_probs[recursive_idx]
-            
+
             # Early vs late: recursive production should be less likely when late
             assert late_probs[recursive_idx] < early_probs[recursive_idx]
 
@@ -782,32 +782,32 @@ class TestSmartProductionSelection:
         """Test that terminal productions are boosted when approaching max_steps."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Find a non-terminal with both terminal and non-terminal productions
         target_nt = None
         for nt, prod_indices in gen_head.production_head.nonterminal_to_productions.items():
             has_terminal = False
             has_nonterminal = False
-            
+
             for idx in prod_indices:
                 production = gen_head.production_head.idx_to_production[idx]
                 rhs = production.rhs()
-                
+
                 if not any(isinstance(symbol, Nonterminal) for symbol in rhs):
                     has_terminal = True
                 else:
                     has_nonterminal = True
-            
+
             if has_terminal and has_nonterminal:
                 target_nt = nt
                 break
-        
+
         if target_nt is None:
             pytest.skip("No suitable non-terminal found for terminal boost test")
-        
+
         # Create uniform logits
         uniform_logits = torch.zeros(len(gen_head.production_head.production_to_idx))
-        
+
         # Test early vs late in expansion
         early_probs = gen_head._apply_smart_production_selection(
             uniform_logits, target_nt, current_steps=1, max_steps=50
@@ -815,14 +815,14 @@ class TestSmartProductionSelection:
         late_probs = gen_head._apply_smart_production_selection(
             uniform_logits, target_nt, current_steps=45, max_steps=50
         )
-        
+
         # Terminal productions should be boosted when late
         valid_indices = gen_head.production_head.nonterminal_to_productions[target_nt]
-        
+
         for idx in valid_indices:
             production = gen_head.production_head.idx_to_production[idx]
             rhs = production.rhs()
-            
+
             # If it's a terminal production (no non-terminals in RHS)
             if not any(isinstance(symbol, Nonterminal) for symbol in rhs):
                 # Should be more likely when late
@@ -836,13 +836,13 @@ class TestStandardizedTerminalProcessing:
         """Test processing of VARIABLE terminals."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         hidden_state = torch.randn(1, hidden_dim)
         context_identifiers = ['a', 'b']
-        
+
         # Process VARIABLE terminal
         result = gen_head._process_terminal('VARIABLE', hidden_state, context_identifiers)
-        
+
         assert isinstance(result, str)
         assert len(result) == 1
         assert result.islower() and result.isalpha()
@@ -851,13 +851,13 @@ class TestStandardizedTerminalProcessing:
         """Test processing of DIGIT terminals."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         hidden_state = torch.randn(1, hidden_dim)
         context_identifiers = []
-        
+
         # Process DIGIT terminal
         result = gen_head._process_terminal('DIGIT', hidden_state, context_identifiers)
-        
+
         assert isinstance(result, str)
         # Should be a valid number string
         assert result.isdigit() or result == "0"
@@ -866,13 +866,13 @@ class TestStandardizedTerminalProcessing:
         """Test processing of STRING terminals."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         hidden_state = torch.randn(1, hidden_dim)
         context_identifiers = []
-        
+
         # Process STRING terminal
         result = gen_head._process_terminal('STRING', hidden_state, context_identifiers)
-        
+
         assert isinstance(result, str)
         # Should be a quoted string
         assert result.startswith('"') and result.endswith('"')
@@ -881,15 +881,15 @@ class TestStandardizedTerminalProcessing:
         """Test processing of boolean terminals."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         hidden_state = torch.randn(1, hidden_dim)
         context_identifiers = []
-        
+
         # Process TRUE terminal
         result_true = gen_head._process_terminal('TRUE', hidden_state, context_identifiers)
         assert result_true in ["True", "False"]
-        
-        # Process FALSE terminal  
+
+        # Process FALSE terminal
         result_false = gen_head._process_terminal('FALSE', hidden_state, context_identifiers)
         assert result_false in ["True", "False"]
 
@@ -897,13 +897,13 @@ class TestStandardizedTerminalProcessing:
         """Test fallback behavior for unknown terminals."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         hidden_state = torch.randn(1, hidden_dim)
         context_identifiers = []
-        
+
         # Process regular terminal that should fall back to token mapping
         result = gen_head._process_terminal('DEF', hidden_state, context_identifiers)
-        
+
         assert isinstance(result, str)
         assert result == "def"  # Should map to actual token
 
@@ -911,14 +911,14 @@ class TestStandardizedTerminalProcessing:
         """Test that terminal processing is consistent across different calls."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         hidden_state = torch.randn(1, hidden_dim)
         context_identifiers = ['x', 'y']
-        
+
         # Test multiple calls for deterministic terminals
         result1 = gen_head._process_terminal('DEF', hidden_state, context_identifiers)
         result2 = gen_head._process_terminal('DEF', hidden_state, context_identifiers)
-        
+
         # Deterministic terminals should be consistent
         assert result1 == result2 == "def"
 
@@ -930,23 +930,23 @@ class TestProductionToHeadRouting:
         """Test production requirement analysis."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Find a production with VARIABLE in it
         variable_production_idx = None
         for idx, production in gen_head.production_head.idx_to_production.items():
             if 'VARIABLE' in [str(symbol) for symbol in production.rhs()]:
                 variable_production_idx = idx
                 break
-        
+
         if variable_production_idx is not None:
             requirements = gen_head._analyze_production_requirements(variable_production_idx)
-            
+
             assert isinstance(requirements, dict)
             assert "needs_identifier" in requirements
             assert "needs_literal" in requirements
             assert "needs_function" in requirements
             assert "needs_control" in requirements
-            
+
             # This production should need identifier head
             assert requirements["needs_identifier"] == True
 
@@ -954,15 +954,15 @@ class TestProductionToHeadRouting:
         """Test that forward method routes to appropriate heads based on non-terminal."""
         hidden_dim = sample_hidden_state.size(-1)
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Test with start symbol
         start_symbol = sample_grammar.start()
         output = gen_head(sample_hidden_state, start_symbol)
-        
+
         # Should always contain production output
         assert "production" in output
         assert isinstance(output["production"], torch.Tensor)
-        
+
         # Should contain only relevant heads based on possible productions
         # (exact heads depend on grammar, but we check the logic works)
         possible_keys = ["production", "identifier", "literal", "function_call", "control_flow"]
@@ -973,10 +973,10 @@ class TestProductionToHeadRouting:
         """Test forward method fallback when no non-terminal provided."""
         hidden_dim = sample_hidden_state.size(-1)
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Call without non-terminal (training scenario)
         output = gen_head(sample_hidden_state, None)
-        
+
         # Should contain all heads (fallback behavior)
         expected_keys = ["production", "identifier", "literal", "function_call", "control_flow"]
         for key in expected_keys:
@@ -991,32 +991,32 @@ class TestImprovedProgramGeneration:
         """Test that program completion rate has improved significantly."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Generate multiple programs and check completion
         context_embeddings = torch.randn(10, 1, hidden_dim)  # 10 programs
-        
+
         programs = gen_head.generate_program(context_embeddings, max_steps=50)
-        
+
         assert len(programs) == 10
-        
+
         # Check that all programs have reasonable length (not empty, not too short)
         for program_tokens in programs:
             assert len(program_tokens) >= 5  # At least "def program ( ) :"
             assert len(program_tokens) <= 100  # Not unreasonably long
-            
+
         # Check basic structure in generated programs
         complete_programs = 0
         for program_tokens in programs:
             token_str = " ".join(program_tokens)
-            
+
             # Should have basic function structure
             has_def = "def" in program_tokens
             has_program = "program" in program_tokens
             has_colon = ":" in program_tokens
-            
+
             if has_def and has_program and has_colon:
                 complete_programs += 1
-        
+
         # At least 70% should have basic complete structure
         completion_rate = complete_programs / len(programs)
         assert completion_rate >= 0.7, f"Completion rate {completion_rate:.2f} below 70%"
@@ -1025,35 +1025,35 @@ class TestImprovedProgramGeneration:
         """Test that infinite recursion patterns are prevented."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Generate multiple programs
         context_embeddings = torch.randn(5, 1, hidden_dim)
         programs = gen_head.generate_program(context_embeddings, max_steps=100)
-        
+
         for program_tokens in programs:
             token_str = " ".join(program_tokens)
-            
+
             # Check for pathological patterns that indicate infinite recursion
             # Pattern 1: Too many consecutive "not" tokens
             consecutive_nots = 0
             max_consecutive_nots = 0
-            
+
             for token in program_tokens:
                 if token == "not":
                     consecutive_nots += 1
                     max_consecutive_nots = max(max_consecutive_nots, consecutive_nots)
                 else:
                     consecutive_nots = 0
-            
+
             # Should not have excessive consecutive "not" tokens (indicates infinite recursion)
             # Allowing up to 10 since occasional longer sequences are acceptable
             assert max_consecutive_nots <= 10, f"Too many consecutive 'not': {max_consecutive_nots} in {token_str[:100]}"
-            
+
             # Pattern 2: Excessive repetition of any single token
             for token in set(program_tokens):
                 count = program_tokens.count(token)
                 total_length = len(program_tokens)
-                
+
                 # No single token should make up more than 30% of the program
                 if total_length > 10:  # Only check for longer programs
                     ratio = count / total_length
@@ -1062,59 +1062,59 @@ class TestImprovedProgramGeneration:
     def test_valid_program_generation_rate(self, sample_grammar):
         """Test that we can generate syntactically valid programs at a reasonable rate."""
         from dataset.grammar import realize_program, parse_program_with_ast
-        
+
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         valid_count = 0
         total_programs = 20
-        
+
         for i in range(total_programs):
             torch.manual_seed(42 + i)  # Different seed for each program
             context_embeddings = torch.randn(1, 1, hidden_dim)
-            
+
             programs = gen_head.generate_program(context_embeddings, max_steps=80)
             program_tokens = programs[0]
-            
+
             try:
                 program_code = realize_program(program_tokens)
                 if parse_program_with_ast(program_code):
                     valid_count += 1
             except Exception:
                 continue  # Invalid program, skip
-        
+
         validity_rate = valid_count / total_programs
-        
+
         # Should achieve at least 10% validity rate (significant improvement from 0%)
         assert validity_rate >= 0.10, f"Validity rate {validity_rate:.1%} below 10%"
-        
+
         print(f"Generated {valid_count}/{total_programs} valid programs ({validity_rate:.1%})")
 
     def test_program_diversity(self, sample_grammar):
         """Test that generated programs show reasonable diversity."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         programs = []
         for i in range(10):
             torch.manual_seed(100 + i * 7)  # Different seeds for diversity
             context_embeddings = torch.randn(1, 1, hidden_dim)
-            
+
             program_list = gen_head.generate_program(context_embeddings, max_steps=60)
             programs.append(" ".join(program_list[0]))
-        
+
         # Check that programs are not all identical
         unique_programs = set(programs)
         diversity_ratio = len(unique_programs) / len(programs)
-        
+
         # At least 70% should be unique
         assert diversity_ratio >= 0.7, f"Diversity {diversity_ratio:.1%} too low - programs too similar"
-        
+
         # Check for variety in program lengths
         lengths = [len(program.split()) for program in programs]
         length_std = torch.tensor(lengths, dtype=torch.float).std()
-        
-        # Standard deviation should be reasonable (programs of varied complexity) 
+
+        # Standard deviation should be reasonable (programs of varied complexity)
         # Programs naturally have similar structure, so threshold should be modest
         assert length_std >= 1, f"Length standard deviation {length_std:.1f} too low - programs too similar in length"
 
@@ -1122,29 +1122,29 @@ class TestImprovedProgramGeneration:
         """Test that generated programs adhere to grammar constraints."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Generate a program
         context_embeddings = torch.randn(1, 1, hidden_dim)
         programs = gen_head.generate_program(context_embeddings, max_steps=40)
         program_tokens = programs[0]
-        
+
         # All tokens should be valid according to our terminal mapping
         valid_tokens = set()
-        
+
         # Add all tokens from token patterns
         from dataset.grammar import get_token_patterns
         token_patterns = get_token_patterns()
-        
+
         for pattern_tokens in token_patterns.values():
             valid_tokens.update(pattern_tokens)
-        
+
         # Add structure tokens and identifiers/numbers that can be generated
         valid_tokens.update(['<NEWLINE>', '<INDENT>', '<DEDENT>'])
         valid_tokens.update([chr(ord('a') + i) for i in range(26)])  # a-z
         valid_tokens.update([str(i) for i in range(21)])  # 0-20
         valid_tokens.update([f'"{chr(ord("a") + i)}"' for i in range(26)])  # quoted strings
         valid_tokens.update(['""', "''", 'True', 'False'])  # literals
-        
+
         # Check each token
         for token in program_tokens:
             if token not in valid_tokens:
@@ -1166,18 +1166,18 @@ class TestRegressionTests:
         """Regression test: ensure we don't generate empty programs."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Test multiple times with different seeds
         for seed in [1, 42, 123, 999]:
             torch.manual_seed(seed)
             context_embeddings = torch.randn(1, 1, hidden_dim)
-            
+
             programs = gen_head.generate_program(context_embeddings, max_steps=30)
             program_tokens = programs[0]
-            
+
             # Should never be empty
             assert len(program_tokens) > 0, f"Empty program generated with seed {seed}"
-            
+
             # Should at least have "def" to start a function
             assert program_tokens[0] == "def", f"Program doesn't start with 'def': {program_tokens}"
 
@@ -1185,11 +1185,11 @@ class TestRegressionTests:
         """Regression test: ensure production indices are always valid."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Test with various step limits
         for max_steps in [10, 25, 50, 100]:
             context_embeddings = torch.randn(1, 1, hidden_dim)
-            
+
             # Should not raise IndexError or KeyError
             try:
                 programs = gen_head.generate_program(context_embeddings, max_steps=max_steps)
@@ -1202,23 +1202,23 @@ class TestRegressionTests:
         """Regression test: ensure only valid productions are selected for each non-terminal."""
         hidden_dim = 64
         gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
-        
+
         # Test production head masking directly
         hidden_state = torch.randn(1, hidden_dim)
-        
+
         # Test with specific non-terminals
         for nt, valid_indices in gen_head.production_head.nonterminal_to_productions.items():
             # Get masked logits
             logits = gen_head.production_head(hidden_state, nt)
-            
+
             # Check that only valid positions have non-inf values
             finite_mask = ~torch.isinf(logits[0])
             finite_indices = torch.where(finite_mask)[0].tolist()
-            
+
             # All finite indices should be in valid_indices
             for idx in finite_indices:
                 assert idx in valid_indices, f"Invalid production {idx} allowed for {nt}"
-            
+
             # All valid indices should be finite (not masked)
             for idx in valid_indices:
                 if idx < len(logits[0]):
