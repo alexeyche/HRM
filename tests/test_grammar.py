@@ -41,10 +41,10 @@ def test_tokenize_all_programs():
         program = registry.get(program_name)
         assert program is not None
 
-        log.info(f"Parsing program {program_name}: \n{program.implementation}")
+        # log.info(f"Parsing program {program_name}: \n{program.implementation}")
 
         tokens = tokenize_code(program.implementation)
-        log.info(f"Tokens: {tokens}")
+        # log.info(f"Tokens: {tokens}")
         assert len(tokens) > 0, f"Program {program_name} has no tokens"
 
 
@@ -106,7 +106,7 @@ def test_parse_tokens_to_productions_all_programs():
         assert len(production_sequence) > 0, f"Production sequence should not be empty for {program_name}"
         assert len(terminal_requirements) > 0, f"Terminal requirements should not be empty for {program_name}"
 
-        log.info(f"Production sequence length: {len(production_sequence)}")
+        # log.info(f"Production sequence length: {len(production_sequence)}")
         production_sequence_length += len(production_sequence)
         tokens_length += len(tokens)
 
@@ -116,8 +116,15 @@ def test_parse_tokens_to_productions_all_programs():
             assert isinstance(prod_idx, int), f"Second element should be an int at position {i} for {program_name}"
             assert prod_idx >= 0, f"Production index should be non-negative at position {i} for {program_name}"
 
-        # Check that terminal requirements contain valid tuples
-        for i, (terminal_type, target_value) in enumerate(terminal_requirements):
+        # Check that terminal requirements contain valid tuples (now with context)
+        for i, terminal_req in enumerate(terminal_requirements):
+            if len(terminal_req) == 3:
+                terminal_type, target_value, context = terminal_req
+                assert isinstance(context, (list, type(None))), f"Context should be a list or None at position {i} for {program_name}"
+            else:
+                # Backward compatibility
+                terminal_type, target_value = terminal_req
+
             assert isinstance(terminal_type, str), f"Terminal type should be a string at position {i} for {program_name}"
             assert isinstance(target_value, str), f"Target value should be a string at position {i} for {program_name}"
             assert terminal_type != "UNKNOWN", f"Terminal type should not be UNKNOWN at position {i} for {program_name}, got '{target_value}'"

@@ -249,13 +249,13 @@ def get_parser(grammar: CFG | None= None, start: str = "S") -> EarleyChartParser
         grammar = get_cfg(start)
     return EarleyChartParser(grammar)
 
-def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[Tuple[Nonterminal, int]], List[Tuple[str, str]]]:
+def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[Tuple[Nonterminal, int]], List[Tuple[str, str, Optional[List[str]]]]]:
     """
-    Parse a token sequence and map it to complete grammar derivation sequence.
+    Parse a token sequence and map it to complete grammar derivation sequence with context tracking.
 
     Uses NLTK's EarleyChartParser to get the exact parse tree, then extracts
-    the complete sequence of productions used in the derivation. This provides
-    proper gradient signals for training the generation head.
+    the complete sequence of productions used in the derivation. Additionally tracks
+    identifier context for proper copy mechanism training.
 
     Args:
         tokens: List of program tokens
@@ -264,7 +264,8 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
     Returns:
         Tuple of (production_sequence, terminal_requirements)
         - production_sequence: Complete list of (nonterminal, production_idx) pairs in derivation order
-        - terminal_requirements: List of (terminal_type, target_value) pairs for terminals
+        - terminal_requirements: List of (terminal_type, target_value, context) tuples
+          where context is the list of identifiers available at that point (for VARIABLE terminals)
     """
     from nltk.parse.earleychart import EarleyChartParser
     from nltk.tree import Tree
@@ -390,15 +391,58 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
     if not production_sequence:
         raise ValueError(f"Failed to extract production sequence from parse tree for tokens {tokens}")
 
-    # Build terminal requirements
-    terminal_requirements = []
-    for token in tokens:
-        terminal_type = classify_token(token)
-        if terminal_type == "UNKNOWN":
-            raise ValueError(f"Unknown terminal type for token '{token}'. This token is not "
-                           f"recognized by the grammar's token patterns.")
-        terminal_requirements.append((terminal_type, token))
+    # Build terminal requirements with simplified context tracking
+    def build_terminal_requirements_with_context(tokens: List[str]) -> List[Tuple[str, str, Optional[List[str]]]]:
+        """Build terminal requirements with simplified, deterministic identifier context tracking."""
+        terminal_requirements = []
+        identifier_context = []  # Track identifiers as they are defined
 
+        # Simplified approach: scan tokens sequentially and detect definitions
+        # This is more deterministic than trying to track complex parsing state
+        for i, token in enumerate(tokens):
+            terminal_type = classify_token(token)
+
+            if terminal_type == "UNKNOWN":
+                raise ValueError(f"Unknown terminal type for token '{token}'. This token is not "
+                               f"recognized by the grammar's token patterns.")
+
+            current_context = None
+            if terminal_type == "VARIABLE":
+                # Always provide current context for variables
+                current_context = list(identifier_context)
+
+                # Simple definition detection: check common patterns
+                is_definition = False
+
+                # Pattern 1: Assignment - var = value
+                if i + 1 < len(tokens) and tokens[i + 1] == "=":
+                    is_definition = True
+
+                # Pattern 2: Function parameter - def func(var) or func(var1, var2)
+                elif (i > 0 and tokens[i - 1] in ["(", ","]):
+                    # Check if we're in a function definition context
+                    # Look backwards for 'def' keyword within reasonable distance
+                    for j in range(max(0, i - 10), i):
+                        if tokens[j] == "def":
+                            is_definition = True
+                            break
+
+                # Pattern 3: for loop variable - for var in ...
+                elif i > 0 and tokens[i - 1] == "for":
+                    is_definition = True
+                elif i > 1 and tokens[i - 2] == "for" and tokens[i - 1] in [" ", ""]:
+                    is_definition = True
+
+                # Add to context if this is a definition and not already present
+                if is_definition and token not in identifier_context:
+                    identifier_context.append(token)
+
+            # Add terminal requirement with context
+            terminal_requirements.append((terminal_type, token, current_context))
+
+        return terminal_requirements
+
+    terminal_requirements = build_terminal_requirements_with_context(tokens)
     return production_sequence, terminal_requirements
 
 

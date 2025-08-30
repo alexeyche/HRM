@@ -136,7 +136,7 @@ def create_batches(graphs: List[Any], infos: List[Dict], batch_size: int) -> Lis
 def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
                    optimizer: torch.optim.Optimizer, train_batches: List[Tuple[Batch, List[Dict]]],
                    device: str, log_interval: int = 10, epoch: int = 1,
-                   use_wandb: bool = False, global_step: int = 0) -> Tuple[Dict[str, float], int]:
+                   use_wandb: bool = False, global_step: int = 0, max_steps: int = 200) -> Tuple[Dict[str, float], int]:
     """Train model for one epoch."""
     model.train()
 
@@ -178,7 +178,7 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
                 t0 = time.time()
                 # Forward pass through autoencoder
-                result = model(batch_graphs, batch_infos, decode=True, max_steps=50, temperature=0.8)
+                result = model(batch_graphs, batch_infos, decode=True, max_steps=max_steps, temperature=0.8)
                 t1 = time.time()
 
                 # Extract original program codes
@@ -299,7 +299,7 @@ def evaluate_model(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
                 try:
                     # Forward pass
-                    result = model(batch_graphs, batch_infos, decode=True, max_steps=50, temperature=0.5)
+                    result = model(batch_graphs, batch_infos, decode=True, max_steps=200, temperature=0.5)
 
                     # Extract programs and compute loss
                     original_programs = [info.get('program_code', '') for info in batch_infos]
@@ -465,6 +465,8 @@ def main():
                        help="Evaluate every N epochs")
     parser.add_argument("--log_interval", type=int, default=10,
                        help="Log training metrics every N steps")
+    parser.add_argument("--max_steps", type=int, default=200,
+                       help="Maximum decoding steps")
 
     args = parser.parse_args()
 
@@ -568,6 +570,7 @@ def main():
                 "data_dir": args.data_dir,
                 "train_samples": len(train_graphs),
                 "val_samples": len(val_graphs),
+                "max_steps": args.max_steps,
                 "seed": args.seed,
             }
         )
@@ -598,7 +601,8 @@ def main():
         train_metrics, global_step = train_one_epoch(
             model, trainer, optimizer, train_batches, device,
             log_interval=args.log_interval, epoch=epoch,
-            use_wandb=use_wandb, global_step=global_step
+            use_wandb=use_wandb, global_step=global_step,
+            max_steps=args.max_steps
         )
 
         if train_metrics:

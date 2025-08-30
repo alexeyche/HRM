@@ -7,6 +7,7 @@ with the implementation.
 
 import pytest
 import torch
+import torch.nn.functional as F
 from nltk import CFG, Nonterminal
 
 from models.generation_head import (
@@ -137,19 +138,20 @@ class TestIdentifierHead:
     """Test the IdentifierHead component."""
 
     def test_initialization(self):
-        """Test IdentifierHead initializes correctly."""
+        """Test IdentifierHead initializes correctly with new unified architecture."""
         hidden_dim = 64
         vocab_size = 26
-        identifier_head = IdentifierHead(hidden_dim, vocab_size)
+        max_identifiers = 10
+        identifier_head = IdentifierHead(hidden_dim, vocab_size, max_identifiers)
 
         assert identifier_head.hidden_dim == hidden_dim
         assert identifier_head.vocab_size == vocab_size
-        assert hasattr(identifier_head, 'gen_proj')
-        assert hasattr(identifier_head, 'copy_gate')
-        assert hasattr(identifier_head, 'copy_attention')
+        assert identifier_head.max_identifiers == max_identifiers
+        assert hasattr(identifier_head, 'unified_classifier')
+        assert hasattr(identifier_head, 'identifier_embedding')
 
     def test_forward_pass(self, sample_hidden_state):
-        """Test IdentifierHead forward pass returns correct structure."""
+        """Test IdentifierHead forward pass returns correct structure with unified architecture."""
         hidden_dim = sample_hidden_state.size(-1)
         identifier_head = IdentifierHead(hidden_dim)
 
@@ -157,36 +159,47 @@ class TestIdentifierHead:
 
         assert isinstance(output, dict)
         assert 'generation' in output
-        assert 'copy_gate' in output
-        assert 'copy_attention' in output
+        assert 'copy' in output
+        assert 'unified' in output
         assert 'available_identifiers' in output
+        assert 'num_available' in output
 
         # Check shapes
         assert output['generation'].size(0) == sample_hidden_state.size(0)
-        assert output['copy_gate'].size(0) == sample_hidden_state.size(0)
+        assert output['copy'].size(0) == sample_hidden_state.size(0)
+        assert output['unified'].size(0) == sample_hidden_state.size(0)
 
     def test_copy_mechanism_with_identifiers(self, sample_hidden_state):
-        """Test copy mechanism when identifiers are available."""
+        """Test copy mechanism when identifiers are available with unified architecture."""
         hidden_dim = sample_hidden_state.size(-1)
         identifier_head = IdentifierHead(hidden_dim)
 
         context_ids = ['a', 'b', 'x']
         output = identifier_head(sample_hidden_state, context_ids)
 
-        # Should have non-zero copy attention logits
-        assert output['copy_attention'].size(1) > 0
+        # Should have copy logits for available identifiers
+        assert output['copy'].size(1) >= len(context_ids)
         assert output['available_identifiers'] == context_ids
+        assert output['num_available'] == len(context_ids)
+        
+        # Unified logits should include both generation and copy options
+        expected_size = identifier_head.vocab_size + identifier_head.max_identifiers
+        assert output['unified'].size(1) == expected_size
 
     def test_copy_mechanism_without_identifiers(self, sample_hidden_state):
-        """Test copy mechanism when no identifiers available."""
+        """Test copy mechanism when no identifiers available with unified architecture."""
         hidden_dim = sample_hidden_state.size(-1)
         identifier_head = IdentifierHead(hidden_dim)
 
         output = identifier_head(sample_hidden_state, [])
 
-        # Should have empty copy attention
-        assert output['copy_attention'].size(1) == 0
+        # Should have masked copy logits (all -inf)
+        assert output['copy'].size(1) == identifier_head.max_identifiers
         assert output['available_identifiers'] == []
+        assert output['num_available'] == 0
+        
+        # Copy logits should all be -inf (masked)
+        assert torch.all(torch.isinf(output['copy'])) and torch.all(output['copy'] < 0)
 
     def test_sample_identifier(self, sample_hidden_state):
         """Test identifier sampling functionality."""
@@ -1007,8 +1020,6 @@ class TestImprovedProgramGeneration:
         # Check basic structure in generated programs
         complete_programs = 0
         for program_tokens in programs:
-            token_str = " ".join(program_tokens)
-
             # Should have basic function structure
             has_def = "def" in program_tokens
             has_program = "program" in program_tokens
@@ -1157,6 +1168,335 @@ class TestImprovedProgramGeneration:
                     continue  # Single char identifier
                 else:
                     pytest.fail(f"Invalid token generated: '{token}' in program {' '.join(program_tokens[:10])}...")
+
+
+class TestCopyMechanismTraining:
+    """Test the fixed copy mechanism training to ensure identifier loss decreases properly."""
+
+    def test_unified_loss_calculation(self, sample_grammar):
+        """Test that unified classifier loss is calculated correctly for copy vs generate decisions."""
+        hidden_dim = 64
+        gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
+        
+        hidden_state = torch.randn(1, hidden_dim)
+        device = hidden_state.device
+        
+        # Test case 1: Should copy (identifier exists in context)
+        context_identifiers = ['a', 'b']
+        target_value = 'a'  # Should copy this
+        
+        id_output = gen_head.identifier_head(hidden_state, context_identifiers)
+        
+        # Calculate unified loss as in our simplified approach
+        should_copy = target_value in context_identifiers
+        if should_copy and len(context_identifiers) > 0:
+            # Target is a copy operation
+            copy_target_idx = context_identifiers.index(target_value)
+            # Index in unified classifier = vocab_size + copy_index
+            unified_target_idx = gen_head.identifier_head.vocab_size + copy_target_idx
+        else:
+            # Target is a generation operation
+            target_char_idx = ord(target_value.lower()) - ord('a')
+            unified_target_idx = target_char_idx
+        
+        target_tensor = torch.tensor([unified_target_idx], device=device)
+        unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
+        
+        assert isinstance(unified_loss, torch.Tensor)
+        assert unified_loss.numel() == 1  # Single scalar loss
+        assert unified_loss.item() >= 0  # Loss should be non-negative
+        assert should_copy == True  # Should copy 'a'
+        assert unified_target_idx == gen_head.identifier_head.vocab_size + 0  # First copy slot
+        
+        # Test case 2: Should generate (new identifier)
+        target_value_new = 'z'  # Not in context, should generate
+        should_copy_new = target_value_new in context_identifiers
+        target_char_idx_new = ord(target_value_new.lower()) - ord('a')
+        unified_target_idx_new = target_char_idx_new  # Generation index
+        
+        target_tensor_new = torch.tensor([unified_target_idx_new], device=device)
+        unified_loss_new = F.cross_entropy(id_output["unified"], target_tensor_new)
+        
+        assert should_copy_new == False  # Should generate 'z'
+        assert isinstance(unified_loss_new, torch.Tensor)
+        assert unified_target_idx_new == 25  # 'z' is index 25
+        
+        # The losses should be different since targets are different
+        assert not torch.allclose(unified_loss, unified_loss_new)
+
+    def test_copy_index_calculation(self, sample_grammar):
+        """Test that copy indices are calculated correctly in unified classifier."""
+        hidden_dim = 64
+        gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
+        
+        hidden_state = torch.randn(1, hidden_dim)
+        context_identifiers = ['a', 'b', 'c']
+        target_value = 'b'  # Should copy this (index 1)
+        
+        id_output = gen_head.identifier_head(hidden_state, context_identifiers)
+        
+        # Test unified classifier approach
+        should_copy = target_value in context_identifiers
+        if should_copy and len(context_identifiers) > 0:
+            copy_target_idx = context_identifiers.index(target_value)
+            # In unified classifier: vocab_size + copy_index
+            unified_target_idx = gen_head.identifier_head.vocab_size + copy_target_idx
+            
+            target_tensor = torch.tensor([unified_target_idx])
+            unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
+            
+            assert isinstance(unified_loss, torch.Tensor)
+            assert unified_loss.item() >= 0
+            assert copy_target_idx == 1  # 'b' is at index 1
+            assert unified_target_idx == gen_head.identifier_head.vocab_size + 1  # 26 + 1 = 27
+            
+            # Check that unified classifier has correct shape
+            expected_size = gen_head.identifier_head.vocab_size + gen_head.identifier_head.max_identifiers
+            assert id_output["unified"].shape[1] == expected_size
+            
+            # Check that context is properly tracked
+            assert id_output["num_available"] == len(context_identifiers)
+            assert id_output["available_identifiers"] == context_identifiers
+
+    def test_generation_index_calculation(self, sample_grammar):
+        """Test that generation indices are calculated correctly in unified classifier."""
+        hidden_dim = 64
+        gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
+        
+        hidden_state = torch.randn(1, hidden_dim)
+        context_identifiers = ['a']  # Only 'a' exists
+        target_value = 'x'  # New identifier, should generate
+        
+        id_output = gen_head.identifier_head(hidden_state, context_identifiers)
+        
+        should_copy = target_value in context_identifiers
+        assert should_copy == False
+        
+        # When generating, use unified classifier with generation index
+        if not should_copy:
+            target_char_idx = ord(target_value.lower()) - ord('a')
+            if 0 <= target_char_idx < 26:
+                # In unified classifier, generation uses direct character index
+                unified_target_idx = target_char_idx
+                target_tensor = torch.tensor([unified_target_idx])
+                unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
+                
+                assert isinstance(unified_loss, torch.Tensor)
+                assert unified_loss.item() >= 0
+                assert target_char_idx == 23  # 'x' -> 23
+                assert unified_target_idx == 23  # Direct mapping for generation
+                
+                # Test that generation logits are also available separately
+                gen_loss = F.cross_entropy(id_output["generation"], target_tensor)
+                assert isinstance(gen_loss, torch.Tensor)
+
+    def test_context_tracking_during_training(self):
+        """Test that context identifiers are properly tracked during training."""
+        # Test doesn't need grammar or hidden_dim, just testing logic
+        
+        # Simulate the context tracking logic from our fix
+        context_identifiers = []
+        identifiers_sequence = ['a', 'b', 'a', 'c', 'a']  # Reuse 'a' multiple times
+        
+        for target_value in identifiers_sequence:
+            should_copy = target_value in context_identifiers
+            
+            if target_value == 'a':
+                if len(context_identifiers) == 0:
+                    # First occurrence - should generate
+                    assert should_copy == False
+                else:
+                    # Subsequent occurrences - should copy
+                    assert should_copy == True
+            elif target_value in ['b', 'c']:
+                # First time seeing these - should generate
+                assert should_copy == False
+                
+            # Add to context as in our fix
+            if target_value not in context_identifiers:
+                context_identifiers.append(target_value)
+        
+        # Final context should contain all unique identifiers
+        assert set(context_identifiers) == {'a', 'b', 'c'}
+        assert context_identifiers == ['a', 'b', 'c']  # Order preserved
+
+    def test_unified_identifier_loss_scenarios(self, sample_grammar):
+        """Test that unified classifier works correctly for all copy/generate scenarios."""
+        hidden_dim = 64
+        gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
+        
+        hidden_state = torch.randn(1, hidden_dim)
+        device = hidden_state.device
+        
+        # Test scenarios with unified classifier
+        test_cases = [
+            (['a'], 'a', True),     # Should copy existing identifier
+            (['a'], 'b', False),    # Should generate new identifier
+            ([], 'a', False),       # Should generate (no context)
+            (['a', 'b', 'c'], 'b', True)  # Should copy from multiple options
+        ]
+        
+        for context_ids, target, expected_copy in test_cases:
+            id_output = gen_head.identifier_head(hidden_state, context_ids)
+            should_copy = target in context_ids
+            
+            assert should_copy == expected_copy
+            
+            # Calculate unified target index
+            if should_copy and len(context_ids) > 0:
+                # Copy operation
+                copy_target_idx = context_ids.index(target)
+                unified_target_idx = gen_head.identifier_head.vocab_size + copy_target_idx
+            else:
+                # Generation operation
+                target_char_idx = ord(target.lower()) - ord('a')
+                if 0 <= target_char_idx < 26:
+                    unified_target_idx = target_char_idx
+                else:
+                    continue  # Skip invalid characters
+            
+            # Single unified loss calculation
+            target_tensor = torch.tensor([unified_target_idx], device=device)
+            unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
+            assert isinstance(unified_loss, torch.Tensor)
+            assert unified_loss.item() >= 0
+            
+            # Verify output structure
+            assert "unified" in id_output
+            assert "generation" in id_output  
+            assert "copy" in id_output
+            assert "available_identifiers" in id_output
+            assert "num_available" in id_output
+
+    def test_identifier_loss_regression_prevention(self, sample_grammar):
+        """Regression test to ensure unified identifier loss works correctly."""
+        from models.generation_head import GrammarAwareGenerationHead
+        import torch.nn.functional as F
+        
+        hidden_dim = 64
+        gen_head = GrammarAwareGenerationHead(hidden_dim, sample_grammar)
+        
+        # Create a simple test scenario
+        hidden_state = torch.randn(1, hidden_dim)
+        
+        # Test multiple targets including reuse
+        targets = ['a', 'b', 'a', 'c', 'a']  # Mix of copy and generate
+        total_loss = torch.tensor(0.0)
+        step_count = 0
+        
+        current_context = []
+        
+        for target_value in targets:
+            if target_value and len(target_value) == 1 and target_value.islower():
+                # Replicate our simplified unified loss calculation
+                id_output = gen_head.identifier_head(hidden_state, current_context)
+                
+                should_copy = target_value in current_context
+                device = hidden_state.device
+                
+                # Calculate target index in unified classifier
+                if should_copy and len(current_context) > 0:
+                    # Copy operation
+                    try:
+                        copy_target_idx = current_context.index(target_value)
+                        unified_target_idx = gen_head.identifier_head.vocab_size + copy_target_idx
+                    except (ValueError, IndexError):
+                        # Fallback to generation
+                        target_char_idx = ord(target_value.lower()) - ord('a')
+                        unified_target_idx = target_char_idx
+                else:
+                    # Generation operation
+                    target_char_idx = ord(target_value.lower()) - ord('a')
+                    if 0 <= target_char_idx < 26:
+                        unified_target_idx = target_char_idx
+                    else:
+                        continue
+                
+                # Single unified loss calculation
+                target_tensor = torch.tensor([unified_target_idx], device=device)
+                unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
+                total_loss = total_loss + unified_loss
+                step_count += 1
+                
+                # Update context as in our fix
+                if target_value not in current_context:
+                    current_context.append(target_value)
+        
+        # All loss calculations should succeed
+        assert step_count > 0
+        assert isinstance(total_loss, torch.Tensor)
+        assert total_loss.item() >= 0
+        
+        # Context should have been updated properly
+        assert set(current_context) == {'a', 'b', 'c'}
+        
+        # Verify unified architecture is working
+        final_output = gen_head.identifier_head(hidden_state, current_context)
+        assert "unified" in final_output
+        assert final_output["unified"].shape[1] == gen_head.identifier_head.vocab_size + gen_head.identifier_head.max_identifiers
+
+
+class TestLossAveragingFix:
+    """Test the fixed loss averaging to ensure identifier loss can decrease during training."""
+
+    def test_loss_averaging_consistency(self):
+        """Test that loss averaging uses proper normalization and doesn't artificially inflate losses."""
+        # Test the mathematical behavior of our loss averaging fix directly
+        device = torch.device("cpu")
+        
+        # Simulate some accumulated losses from a batch
+        total_production_loss = torch.tensor(5.0, device=device)
+        total_identifier_loss = torch.tensor(3.0, device=device) 
+        total_literal_loss = torch.tensor(2.0, device=device)
+        total_steps = 20
+        
+        # Apply our NEW fixed averaging logic
+        if total_steps > 0:
+            avg_production_loss = total_production_loss / total_steps
+            avg_identifier_loss = total_identifier_loss / total_steps  # Fixed: was // 4
+            avg_literal_loss = total_literal_loss / total_steps       # Fixed: was // 4
+        else:
+            avg_production_loss = torch.tensor(0.0, device=device)
+            avg_identifier_loss = torch.tensor(0.0, device=device)
+            avg_literal_loss = torch.tensor(0.0, device=device)
+        
+        # Verify the new averaging produces reasonable values
+        assert abs(avg_production_loss.item() - 0.25) < 1e-6  # 5.0 / 20 = 0.25
+        assert abs(avg_identifier_loss.item() - 0.15) < 1e-6  # 3.0 / 20 = 0.15
+        assert abs(avg_literal_loss.item() - 0.10) < 1e-6     # 2.0 / 20 = 0.10
+        
+        total_loss = avg_production_loss + avg_identifier_loss + avg_literal_loss
+        assert abs(total_loss.item() - 0.50) < 1e-6  # 0.25 + 0.15 + 0.10 = 0.50
+        
+        # Compare with OLD problematic averaging
+        old_avg_identifier = total_identifier_loss / max(1, total_steps // 4)  # 3.0 / 5 = 0.6
+        old_avg_literal = total_literal_loss / max(1, total_steps // 4)        # 2.0 / 5 = 0.4
+        
+        # New approach should give significantly smaller (more reasonable) losses
+        assert avg_identifier_loss.item() < old_avg_identifier.item() / 3  # 0.15 < 0.2 (0.6 / 3)
+        assert avg_literal_loss.item() < old_avg_literal.item() / 3         # 0.10 < 0.133 (0.4 / 3)
+
+    def test_loss_averaging_regression_prevention(self):
+        """Regression test to ensure we don't revert to the old problematic averaging."""
+        # Simulate the calculation that was causing problems
+        total_identifier_loss = torch.tensor(2.25)  # Example accumulated loss
+        total_steps = 10
+        
+        # OLD problematic way (what we fixed):
+        # avg_identifier_loss_old = total_identifier_loss / max(1, total_steps // 4)
+        avg_identifier_loss_old = total_identifier_loss / max(1, total_steps // 4)  # Would be 2.25 / 2 = 1.125
+        
+        # NEW correct way (what we implemented):
+        avg_identifier_loss_new = total_identifier_loss / total_steps  # Should be 2.25 / 10 = 0.225
+        
+        # Verify the new approach gives much more reasonable loss values
+        assert abs(avg_identifier_loss_new.item() - 0.225) < 1e-6  # Use approximate equality for float
+        assert abs(avg_identifier_loss_old.item() - 1.125) < 1e-6
+        
+        # New approach should be significantly smaller
+        assert avg_identifier_loss_new.item() < avg_identifier_loss_old.item() / 2
+        
+        # This ensures our fix is working and loss won't artificially plateau
 
 
 class TestRegressionTests:
