@@ -111,9 +111,15 @@ class IdentifierHead(nn.Module):
         # Generation head for new identifiers
         self.gen_proj = nn.Linear(hidden_dim, vocab_size)
 
-        # Copy mechanism components
-        self.copy_gate = nn.Linear(hidden_dim, 1)  # decide whether to copy or generate
-        self.copy_attention = nn.Linear(hidden_dim, hidden_dim)  # attention over available identifiers
+        # Improved copy mechanism components
+        # Copy gate takes into account both hidden state AND context availability
+        self.copy_gate = nn.Linear(hidden_dim + 1, 1)  # +1 for context_available feature
+        
+        # Simpler copy attention - just project hidden state to attention scores
+        self.copy_attention = nn.Linear(hidden_dim, max_identifiers)
+        
+        # Embedding layer for identifier characters (learnable embeddings)
+        self.identifier_embedding = nn.Embedding(vocab_size, hidden_dim)
 
     def forward(self, hidden_state: torch.Tensor, context_identifiers: Optional[List[str]] = None) -> Dict[str, torch.Tensor]:
         """
@@ -127,27 +133,30 @@ class IdentifierHead(nn.Module):
             Dictionary with generation, copy gate, and copy attention logits
         """
         batch_size = hidden_state.size(0)
+        device = hidden_state.device
 
         # Generation logits for new identifiers
         gen_logits = self.gen_proj(hidden_state)  # (batch_size, vocab_size)
 
-        # Copy gate - sigmoid to get probability of copying vs generating
-        copy_gate_logits = self.copy_gate(hidden_state)  # (batch_size, 1)
+        # Enhanced copy gate - considers context size and availability  
+        num_available = len(context_identifiers) if context_identifiers else 0
+        # Normalize context size to [0, 1] range to avoid bias
+        context_feature = torch.full((batch_size, 1), min(num_available / 5.0, 1.0), device=device)
+        copy_gate_input = torch.cat([hidden_state, context_feature], dim=1)
+        copy_gate_logits = self.copy_gate(copy_gate_input)  # (batch_size, 1)
 
-        # Copy attention logits
+        # Improved copy attention - simpler and more direct
         if context_identifiers and len(context_identifiers) > 0:
-            # Create simple embeddings for identifiers (map a->0, b->1, etc.)
-            identifier_embeddings = self._create_identifier_embeddings(context_identifiers, hidden_state.device)
-
-            # Compute attention scores
-            query = self.copy_attention(hidden_state)  # (batch_size, hidden_dim)
-
-            # Simple dot-product attention
-            copy_attention_logits = torch.matmul(query.unsqueeze(1), identifier_embeddings.T)  # (batch_size, 1, num_ids)
-            copy_attention_logits = copy_attention_logits.squeeze(1)  # (batch_size, num_ids)
+            num_identifiers = len(context_identifiers)
+            
+            # Get attention scores for available identifiers
+            attention_logits = self.copy_attention(hidden_state)  # (batch_size, max_identifiers)
+            
+            # Only keep logits for actual identifiers
+            copy_attention_logits = attention_logits[:, :num_identifiers]  # (batch_size, num_identifiers)
         else:
             # No identifiers to copy from
-            copy_attention_logits = torch.zeros(batch_size, 0, device=hidden_state.device)
+            copy_attention_logits = torch.zeros(batch_size, 0, device=device)
 
         return {
             "generation": gen_logits,
@@ -156,34 +165,7 @@ class IdentifierHead(nn.Module):
             "available_identifiers": context_identifiers or []
         }
 
-    def _create_identifier_embeddings(self, identifiers: List[str], device: torch.device) -> torch.Tensor:
-        """
-        Create simple embeddings for available identifiers.
-
-        Args:
-            identifiers: List of identifier strings
-            device: Device to create tensor on
-
-        Returns:
-            Embedding tensor (num_identifiers, hidden_dim)
-        """
-        # Simple mapping: convert single-letter identifiers to indices
-        embeddings = []
-        for identifier in identifiers:
-            if len(identifier) == 1 and identifier.islower():
-                # Map a->0, b->1, ..., z->25
-                idx = ord(identifier) - ord('a')
-                if 0 <= idx < self.vocab_size:
-                    # Create one-hot embedding
-                    embedding = torch.zeros(self.hidden_dim, device=device)
-                    embedding[idx % self.hidden_dim] = 1.0
-                    embeddings.append(embedding)
-
-        if embeddings:
-            return torch.stack(embeddings)
-        else:
-            # Return empty tensor if no valid identifiers
-            return torch.zeros(0, self.hidden_dim, device=device)
+    # Removed old embedding method - now using learnable embeddings
 
     def sample_identifier(self, logits_dict: Dict[str, torch.Tensor], temperature: float = 1.0) -> List[str]:
         """
@@ -875,21 +857,60 @@ class GrammarAwareGenerationHead(nn.Module):
             production_loss = torch.add(production_loss, prod_loss)
             step_count += 1
 
-        # Compute loss for terminal value predictions
-        for terminal_type, target_value in terminal_requirements:
+        # Compute loss for terminal value predictions using proper context from parsing
+        for terminal_requirement in terminal_requirements:
+            # Handle both old format (terminal_type, target_value) and new format (terminal_type, target_value, context)
+            if len(terminal_requirement) == 3:
+                terminal_type, target_value, context_identifiers = terminal_requirement
+                # Use the context from parsing, or empty list if None
+                context_identifiers = context_identifiers or []
+            else:
+                # Fallback to old format
+                terminal_type, target_value = terminal_requirement
+                context_identifiers = []
             if terminal_type == "VARIABLE":
-                # Identifier loss
-                id_output = self.identifier_head(hidden_state)
+                # Identifier loss with proper copy mechanism training
+                id_output = self.identifier_head(hidden_state, context_identifiers)
 
-                # Simple character-based loss for identifiers
                 if target_value and len(target_value) == 1 and target_value.islower():
-                    target_char_idx = ord(target_value.lower()) - ord('a')
-                    if 0 <= target_char_idx < 26:
-                        target_tensor = torch.tensor([target_char_idx], device=device)
-                        id_loss = F.cross_entropy(id_output["generation"] / temperature, target_tensor)
-                        step_loss = torch.add(step_loss, id_loss)
-                        identifier_loss = torch.add(identifier_loss, id_loss)
-                        step_count += 1
+                    # Determine if we should copy (identifier exists) or generate (new identifier)
+                    should_copy = target_value in context_identifiers
+
+                    # Copy gate loss - train to make correct copy/generate decision
+                    copy_gate_target = torch.tensor([1.0 if should_copy else 0.0], device=device)
+                    copy_gate_logit = id_output["copy_gate"].squeeze(-1)  # Remove last dim
+                    copy_gate_loss = F.binary_cross_entropy_with_logits(
+                        copy_gate_logit / temperature, copy_gate_target
+                    )
+                    step_loss = torch.add(step_loss, copy_gate_loss)
+                    identifier_loss = torch.add(identifier_loss, copy_gate_loss)
+                    step_count += 1
+
+                    if should_copy and len(context_identifiers) > 0:
+                        # Copy attention loss - train to select correct identifier
+                        try:
+                            copy_target_idx = context_identifiers.index(target_value)
+                            copy_target_tensor = torch.tensor([copy_target_idx], device=device)
+                            copy_attention_loss = F.cross_entropy(
+                                id_output["copy_attention"] / temperature, copy_target_tensor
+                            )
+                            step_loss = torch.add(step_loss, copy_attention_loss)
+                            identifier_loss = torch.add(identifier_loss, copy_attention_loss)
+                            step_count += 1
+                        except (ValueError, IndexError):
+                            # Target not in context or index error, skip copy attention loss
+                            pass
+                    else:
+                        # Generation loss - train character generation for new identifiers
+                        target_char_idx = ord(target_value.lower()) - ord('a')
+                        if 0 <= target_char_idx < 26:
+                            target_tensor = torch.tensor([target_char_idx], device=device)
+                            gen_loss = F.cross_entropy(id_output["generation"] / temperature, target_tensor)
+                            step_loss = torch.add(step_loss, gen_loss)
+                            identifier_loss = torch.add(identifier_loss, gen_loss)
+                            step_count += 1
+
+                    # Context is now properly managed by the parsing phase
 
             elif terminal_type in ["DIGIT", "STRING", "TRUE", "FALSE"]:
                 # Literal loss
@@ -990,8 +1011,10 @@ class GrammarAwareGenerationHead(nn.Module):
         # Average losses
         if total_steps > 0:
             avg_production_loss = total_production_loss / total_steps
-            avg_identifier_loss = total_identifier_loss / max(1, total_steps // 4)  # Fewer identifier steps
-            avg_literal_loss = total_literal_loss / max(1, total_steps // 4)  # Fewer literal steps
+            # Proper averaging: divide by the actual number of loss contributions
+            # Identifier and literal losses are accumulated per terminal, so we normalize by total steps
+            avg_identifier_loss = total_identifier_loss / total_steps
+            avg_literal_loss = total_literal_loss / total_steps
         else:
             avg_production_loss = torch.tensor(0.0, device=device)
             avg_identifier_loss = torch.tensor(0.0, device=device)
