@@ -820,7 +820,7 @@ class GrammarAwareGenerationHead(nn.Module):
         hidden_state: torch.Tensor,
         tokens: List[str],
         temperature: float = 1.0
-    ) -> Tuple[float, Tuple[int, int, int, int], torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> Tuple[float, Tuple[int, int, int, int], torch.Tensor, torch.Tensor, torch.Tensor]:
         device = hidden_state.device
         if not tokens:
             return (
@@ -829,7 +829,6 @@ class GrammarAwareGenerationHead(nn.Module):
                 torch.tensor(0.0, device=device),
                 torch.tensor(0.0, device=device),
                 torch.tensor(0.0, device=device),
-                {}  # Empty debug info
             )
 
         production_loss = torch.tensor(0.0, device=device)
@@ -844,17 +843,6 @@ class GrammarAwareGenerationHead(nn.Module):
         production_steps = 0
         identifier_steps = 0
         literal_steps = 0
-
-        # Debug info tracking
-        debug_info = {
-            "copy_decisions": [],  # List of (should_copy, target_value, context_size)
-            "copy_gate_losses": [],  # List of copy gate loss values
-            "copy_attention_losses": [],  # List of copy attention loss values
-            "generation_losses": [],  # List of generation loss values
-            "identifiers_processed": 0,
-            "copy_attempts": 0,
-            "generation_attempts": 0,
-        }
 
         # Compute loss for each production decision
         for prod_idx, (nonterminal, target_prod_idx) in enumerate(production_sequence):
@@ -884,8 +872,6 @@ class GrammarAwareGenerationHead(nn.Module):
                 if target_value and len(target_value) == 1 and target_value.islower():
                     # Simplified unified approach - single loss calculation
                     should_copy = target_value in context_identifiers
-                    debug_info["identifiers_processed"] += 1
-                    debug_info["copy_decisions"].append((should_copy, target_value, len(context_identifiers)))
 
                     # Calculate target index in unified classifier
                     if should_copy and len(context_identifiers) > 0:
@@ -894,18 +880,15 @@ class GrammarAwareGenerationHead(nn.Module):
                             copy_target_idx = context_identifiers.index(target_value)
                             # Index in unified classifier = vocab_size + copy_index
                             unified_target_idx = self.identifier_head.vocab_size + copy_target_idx
-                            debug_info["copy_attempts"] += 1
                         except (ValueError, IndexError):
                             # Fallback to generation if target not found in context
                             target_char_idx = ord(target_value.lower()) - ord('a')
                             unified_target_idx = target_char_idx
-                            debug_info["generation_attempts"] += 1
                     else:
                         # Target is a generation operation (a-z)
                         target_char_idx = ord(target_value.lower()) - ord('a')
                         if 0 <= target_char_idx < 26:
                             unified_target_idx = target_char_idx
-                            debug_info["generation_attempts"] += 1
                         else:
                             # Invalid character, skip
                             continue
@@ -915,12 +898,6 @@ class GrammarAwareGenerationHead(nn.Module):
                     unified_loss = F.cross_entropy(
                         id_output["unified"] / temperature, target_tensor
                     )
-
-                    # Record loss for debugging
-                    if should_copy:
-                        debug_info["copy_attention_losses"].append(unified_loss.item())
-                    else:
-                        debug_info["generation_losses"].append(unified_loss.item())
 
                     step_loss = torch.add(step_loss, unified_loss)
                     identifier_loss = torch.add(identifier_loss, unified_loss)
@@ -978,7 +955,7 @@ class GrammarAwareGenerationHead(nn.Module):
             loss = step_loss.item() if total_steps > 0 else 0.0
         else:
             loss = float(step_loss) if total_steps > 0 else 0.0
-        return loss, (total_steps, production_steps, identifier_steps, literal_steps), production_loss, identifier_loss, literal_loss, debug_info
+        return loss, (total_steps, production_steps, identifier_steps, literal_steps), production_loss, identifier_loss, literal_loss
 
     def compute_sequence_loss(
         self,
@@ -1009,19 +986,6 @@ class GrammarAwareGenerationHead(nn.Module):
         identifier_step_count = 0
         literal_step_count = 0
 
-        # Aggregate debug info across batch
-        batch_debug_info = {
-            "total_identifiers_processed": 0,
-            "total_copy_attempts": 0,
-            "total_generation_attempts": 0,
-            "copy_decisions_summary": {"copy": 0, "generate": 0},
-            "avg_copy_gate_loss": 0.0,
-            "avg_copy_attention_loss": 0.0,
-            "avg_generation_loss": 0.0,
-            "context_size_distribution": [],
-        }
-        all_debug_infos = []  # Collect all debug info from samples
-
         if use_batch:
             raise NotImplementedError("Batch loss computation is not implemented yet")
 
@@ -1032,7 +996,7 @@ class GrammarAwareGenerationHead(nn.Module):
                 hidden_state = context_embeddings[batch_idx:batch_idx+1, -1, :]
                 tokens = target_tokens[batch_idx]
 
-                loss, step_counts, production_loss, identifier_loss, literal_loss, single_debug_info = self.compute_sequence_loss_single(
+                loss, step_counts, production_loss, identifier_loss, literal_loss = self.compute_sequence_loss_single(
                     hidden_state,
                     tokens,
                     temperature
@@ -1046,21 +1010,6 @@ class GrammarAwareGenerationHead(nn.Module):
                 identifier_step_count += step_counts[2]  # Identifier steps
                 literal_step_count += step_counts[3]  # Literal steps
 
-                # Collect all debug info
-                all_debug_infos.append(single_debug_info)
-
-                # Aggregate debug info
-                batch_debug_info["total_identifiers_processed"] += single_debug_info["identifiers_processed"]
-                batch_debug_info["total_copy_attempts"] += single_debug_info["copy_attempts"]
-                batch_debug_info["total_generation_attempts"] += single_debug_info["generation_attempts"]
-
-                # Count copy vs generate decisions
-                for should_copy, _, context_size in single_debug_info["copy_decisions"]:
-                    if should_copy:
-                        batch_debug_info["copy_decisions_summary"]["copy"] += 1
-                    else:
-                        batch_debug_info["copy_decisions_summary"]["generate"] += 1
-                    batch_debug_info["context_size_distribution"].append(context_size)
 
         # Fixed averaging: use proper step counts for each loss type
         if production_step_count > 0:
@@ -1108,20 +1057,6 @@ class GrammarAwareGenerationHead(nn.Module):
                      loss_weights[1] * clipped_identifier_loss +
                      loss_weights[2] * clipped_literal_loss)
 
-        # Calculate average debug losses for reporting
-        all_copy_gate_losses = []
-        all_copy_attention_losses = []
-        all_generation_losses = []
-
-        for single_debug in all_debug_infos:  # Use all collected debug info
-            all_copy_gate_losses.extend(single_debug.get("copy_gate_losses", []))
-            all_copy_attention_losses.extend(single_debug.get("copy_attention_losses", []))
-            all_generation_losses.extend(single_debug.get("generation_losses", []))
-
-        batch_debug_info["avg_copy_gate_loss"] = sum(all_copy_gate_losses) / max(1, len(all_copy_gate_losses))
-        batch_debug_info["avg_copy_attention_loss"] = sum(all_copy_attention_losses) / max(1, len(all_copy_attention_losses))
-        batch_debug_info["avg_generation_loss"] = sum(all_generation_losses) / max(1, len(all_generation_losses))
-
         return {
             "total_loss": total_loss,
             "production_loss": avg_production_loss,
@@ -1139,5 +1074,4 @@ class GrammarAwareGenerationHead(nn.Module):
             "identifier_steps": torch.tensor(identifier_step_count, device=device),
             "literal_steps": torch.tensor(literal_step_count, device=device),
             "avg_loss_per_step": total_loss / max(1, total_steps) if total_steps > 0 else torch.tensor(0.0, device=device),
-            "debug_info": batch_debug_info
         }
