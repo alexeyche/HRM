@@ -945,7 +945,7 @@ class GrammarAwareGenerationHead(nn.Module):
         context_embeddings: torch.Tensor,
         target_tokens: List[List[str]],
         temperature: float = 1.0,
-        use_batch: bool = True
+        use_batch: bool = False
     ) -> Dict[str, torch.Tensor]:
         """
         Compute cross-entropy loss for target token sequences using grammar-constrained generation.

@@ -222,11 +222,11 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
                 # Step-wise logging (reduced frequency when using progress bar)
                 if (batch_idx + 1) % log_interval == 0:
-                    # Calculate running averages for recent steps
-                    recent_losses = {}
+                    # Calculate cumulative averages for all steps in current epoch
+                    cumulative_losses = {}
                     for key, values in step_losses.items():
-                        recent_loss = sum(values[-log_interval:]) / min(len(values), log_interval)
-                        recent_losses[key] = recent_loss
+                        cumulative_loss = sum(values) / len(values) if values else 0.0
+                        cumulative_losses[key] = cumulative_loss
 
                     # Log to WandB if enabled (console logging is replaced by progress bar)
                     if use_wandb:
@@ -235,8 +235,8 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
                             "epoch": epoch,
                             "train/step_batch_idx": batch_idx + 1,
                             **{
-                                f"train/step_{key}": recent_losses[key]
-                                for key in recent_losses
+                                f"train/step_{key}": cumulative_losses[key]
+                                for key in cumulative_losses
                             },
                         })
 
