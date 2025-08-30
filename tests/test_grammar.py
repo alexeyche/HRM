@@ -79,6 +79,8 @@ def test_parse_tokens_to_productions_all_programs():
     # registry = get_program_registry()
 
     failed_programs = []
+    production_sequence_length = 0.0
+    tokens_length = 0.0
     for program_name in registry.list_names():
         program = registry.get(program_name)
         assert program is not None
@@ -104,6 +106,10 @@ def test_parse_tokens_to_productions_all_programs():
         assert len(production_sequence) > 0, f"Production sequence should not be empty for {program_name}"
         assert len(terminal_requirements) > 0, f"Terminal requirements should not be empty for {program_name}"
 
+        log.info(f"Production sequence length: {len(production_sequence)}")
+        production_sequence_length += len(production_sequence)
+        tokens_length += len(tokens)
+
         # Check that production sequence contains valid tuples
         for i, (nonterminal, prod_idx) in enumerate(production_sequence):
             assert hasattr(nonterminal, 'symbol'), f"First element should be a Nonterminal at position {i} for {program_name}"
@@ -119,3 +125,5 @@ def test_parse_tokens_to_productions_all_programs():
         # log.info(f"✓ Successfully parsed {program_name} with {len(production_sequence)} productions and {len(terminal_requirements)} terminals")
 
     assert len(failed_programs) == 0, f"Failed to parse {len(failed_programs)} programs: \n{''.join(failed_programs)}"
+    log.info(f"Average production sequence length: {production_sequence_length / len(registry.list_names())}")
+    log.info(f"Average tokens length: {tokens_length / len(registry.list_names())}")

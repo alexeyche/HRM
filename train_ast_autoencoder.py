@@ -35,6 +35,7 @@ from torch_geometric.data import Batch
 import wandb
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TimeRemainingColumn, MofNCompleteColumn
 from rich.console import Console
+import time
 
 from dataset.build_program_dataset import load_sample
 from models.ast_autoencoder import ASTAutoencoder, ASTAutoencoderTrainer
@@ -175,8 +176,10 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
             try:
                 optimizer.zero_grad()
 
+                t0 = time.time()
                 # Forward pass through autoencoder
                 result = model(batch_graphs, batch_infos, decode=True, max_steps=50, temperature=0.8)
+                t1 = time.time()
 
                 # Extract original program codes
                 original_programs = [info.get('program_code', '') for info in batch_infos]
@@ -185,7 +188,7 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
 
                 # Compute reconstruction loss using trainer
                 loss_dict = trainer.reconstruction_loss(original_programs, reconstructed_programs, latent)
-
+                t2 = time.time()
                 loss = loss_dict['total_loss']
                 loss.backward()
 
@@ -208,12 +211,14 @@ def train_one_epoch(model: ASTAutoencoder, trainer: ASTAutoencoderTrainer,
                     step_losses[key].append(value.item())
                 current_step += 1
 
+                t3 = time.time()
+
                 # Update progress bar with current metrics
                 progress.update(
                     train_task,
                     advance=1,
-                    description=f"[cyan]Epoch {epoch} [dim]• Loss: {loss.item():.4f} • Sim: {loss_dict['similarity_score'].item():.3f}"
                 )
+                console.print(f"[cyan]Epoch {epoch}, step {current_step} [dim]• Loss: {loss.item():.4f} • Sim: {loss_dict['similarity_score'].item():.3f} • perf: forward: {t1 - t0:.2f}s, loss: {t2 - t1:.2f}s, backward: {t3 - t2:.2f}s")
 
                 # Step-wise logging (reduced frequency when using progress bar)
                 if (batch_idx + 1) % log_interval == 0:

@@ -11,6 +11,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from nltk import CFG, Nonterminal
 from dataset.grammar import get_cfg, get_token_patterns
+from dataset.grammar import parse_tokens_to_productions
+
 
 
 class ProductionHead(nn.Module):
@@ -830,11 +832,120 @@ class GrammarAwareGenerationHead(nn.Module):
         """Map grammar terminal symbols to actual code tokens using grammar patterns."""
         return self.terminal_to_token_map.get(terminal, terminal)
 
+    def compute_sequence_loss_single(
+        self,
+        hidden_state: torch.Tensor,
+        tokens: List[str],
+        temperature: float = 1.0
+    ) -> Tuple[float, int, torch.Tensor, torch.Tensor, torch.Tensor]:
+        device = hidden_state.device
+        if not tokens:
+            return (
+                0.0,
+                0,
+                torch.tensor(0.0, device=device),
+                torch.tensor(0.0, device=device),
+                torch.tensor(0.0, device=device)
+            )
+
+        production_loss = torch.tensor(0.0, device=device)
+        identifier_loss = torch.tensor(0.0, device=device)
+        literal_loss = torch.tensor(0.0, device=device)
+
+        # try:
+        # Parse tokens to grammar productions and required terminals
+        production_sequence, terminal_requirements = parse_tokens_to_productions(tokens, self.grammar)
+
+        step_loss = torch.tensor(0.0, device=device)
+        step_count = 0
+
+        # Compute loss for each production decision
+        for prod_idx, (nonterminal, target_prod_idx) in enumerate(production_sequence):
+            # Get production logits for current nonterminal
+            prod_logits = self.production_head(hidden_state, nonterminal)
+
+            # Apply temperature
+            prod_logits = prod_logits / temperature
+
+            # Cross-entropy loss for production selection
+            target_tensor = torch.tensor([target_prod_idx], device=device)
+            prod_loss = F.cross_entropy(prod_logits, target_tensor)
+
+            step_loss = torch.add(step_loss, prod_loss)
+            production_loss = torch.add(production_loss, prod_loss)
+            step_count += 1
+
+        # Compute loss for terminal value predictions
+        for terminal_type, target_value in terminal_requirements:
+            if terminal_type == "VARIABLE":
+                # Identifier loss
+                id_output = self.identifier_head(hidden_state)
+
+                # Simple character-based loss for identifiers
+                if target_value and len(target_value) == 1 and target_value.islower():
+                    target_char_idx = ord(target_value.lower()) - ord('a')
+                    if 0 <= target_char_idx < 26:
+                        target_tensor = torch.tensor([target_char_idx], device=device)
+                        id_loss = F.cross_entropy(id_output["generation"] / temperature, target_tensor)
+                        step_loss = torch.add(step_loss, id_loss)
+                        identifier_loss = torch.add(identifier_loss, id_loss)
+                        step_count += 1
+
+            elif terminal_type in ["DIGIT", "STRING", "TRUE", "FALSE"]:
+                # Literal loss
+                lit_output = self.literal_head(hidden_state)
+
+                # Type loss
+                if terminal_type == "DIGIT":
+                    target_type = torch.tensor([0], device=device)  # int type
+                    type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
+                    step_loss = torch.add(step_loss, type_loss)
+                    step_count += 1
+
+                    # Value loss for integers
+                    try:
+                        int_val = int(target_value)
+                        if 0 <= int_val <= 20:  # Within our int range
+                            target_int = torch.tensor([int_val], device=device)
+                            int_loss = F.cross_entropy(lit_output["int_value"] / temperature, target_int)
+                            step_loss = torch.add(step_loss, int_loss)
+                            literal_loss = torch.add(literal_loss, int_loss)
+                            step_count += 1
+                    except ValueError:
+                        pass
+
+                elif terminal_type == "STRING":
+                    target_type = torch.tensor([1], device=device)  # string type
+                    type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
+                    step_loss = torch.add(step_loss, type_loss)
+                    step_count += 1
+
+                elif terminal_type in ["TRUE", "FALSE"]:
+                    target_type = torch.tensor([2], device=device)  # bool type
+                    type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
+                    step_loss = torch.add(step_loss, type_loss)
+
+                    # Value loss for booleans
+                    bool_val = 1 if target_value == "True" else 0
+                    target_bool = torch.tensor([bool_val], device=device)
+                    bool_loss = F.cross_entropy(lit_output["bool_value"] / temperature, target_bool)
+                    step_loss = torch.add(step_loss, bool_loss)
+                    literal_loss = torch.add(literal_loss, bool_loss)
+                    step_count += 1
+
+        loss = 0.0
+        if isinstance(step_loss, torch.Tensor):
+            loss = step_loss.item() if step_count > 0 else 0.0
+        else:
+            loss = float(step_loss) if step_count > 0 else 0.0
+        return loss, step_count, production_loss, identifier_loss, literal_loss
+
     def compute_sequence_loss(
         self,
         context_embeddings: torch.Tensor,
         target_tokens: List[List[str]],
-        temperature: float = 1.0
+        temperature: float = 1.0,
+        use_batch: bool = True
     ) -> Dict[str, torch.Tensor]:
         """
         Compute cross-entropy loss for target token sequences using grammar-constrained generation.
@@ -847,119 +958,34 @@ class GrammarAwareGenerationHead(nn.Module):
         Returns:
             Dictionary containing loss components and metrics
         """
-        from dataset.grammar import parse_tokens_to_productions
-
         batch_size = len(target_tokens)
         device = context_embeddings.device
 
-        total_production_loss = torch.tensor(0.0, device=device, requires_grad=True)
-        total_identifier_loss = torch.tensor(0.0, device=device, requires_grad=True)
-        total_literal_loss = torch.tensor(0.0, device=device, requires_grad=True)
+        total_production_loss = torch.tensor(0.0, device=device)
+        total_identifier_loss = torch.tensor(0.0, device=device)
+        total_literal_loss = torch.tensor(0.0, device=device)
         total_steps = 0
 
-        # Track per-batch losses
-        batch_losses = []
+        if use_batch:
+            raise NotImplementedError("Batch loss computation is not implemented yet")
 
-        for batch_idx in range(batch_size):
-            tokens = target_tokens[batch_idx]
-            if not tokens:
-                batch_losses.append(0.0)
-                continue
+        else:
+            batch_losses = []
 
-            # Get hidden state for this batch item (use last position)
-            hidden_state = context_embeddings[batch_idx:batch_idx+1, -1, :]
+            for batch_idx in range(batch_size):
+                hidden_state = context_embeddings[batch_idx:batch_idx+1, -1, :]
+                tokens = target_tokens[batch_idx]
 
-            # try:
-            # Parse tokens to grammar productions and required terminals
-            production_sequence, terminal_requirements = parse_tokens_to_productions(tokens, self.grammar)
-
-            step_loss = torch.tensor(0.0, device=device, requires_grad=True)
-            step_count = 0
-
-            # Compute loss for each production decision
-            for prod_idx, (nonterminal, target_prod_idx) in enumerate(production_sequence):
-                # Get production logits for current nonterminal
-                prod_logits = self.production_head(hidden_state, nonterminal)
-
-                # Apply temperature
-                prod_logits = prod_logits / temperature
-
-                # Cross-entropy loss for production selection
-                target_tensor = torch.tensor([target_prod_idx], device=device)
-                prod_loss = F.cross_entropy(prod_logits, target_tensor)
-
-                step_loss = step_loss + prod_loss
-                total_production_loss = total_production_loss + prod_loss
-                step_count += 1
-
-            # Compute loss for terminal value predictions
-            for terminal_type, target_value in terminal_requirements:
-                if terminal_type == "VARIABLE":
-                    # Identifier loss
-                    id_output = self.identifier_head(hidden_state)
-
-                    # Simple character-based loss for identifiers
-                    if target_value and len(target_value) == 1 and target_value.islower():
-                        target_char_idx = ord(target_value.lower()) - ord('a')
-                        if 0 <= target_char_idx < 26:
-                            target_tensor = torch.tensor([target_char_idx], device=device)
-                            id_loss = F.cross_entropy(id_output["generation"] / temperature, target_tensor)
-                            step_loss = step_loss + id_loss
-                            total_identifier_loss = total_identifier_loss + id_loss
-                            step_count += 1
-
-                elif terminal_type in ["DIGIT", "STRING", "TRUE", "FALSE"]:
-                    # Literal loss
-                    lit_output = self.literal_head(hidden_state)
-
-                    # Type loss
-                    if terminal_type == "DIGIT":
-                        target_type = torch.tensor([0], device=device)  # int type
-                        type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
-                        step_loss = step_loss + type_loss
-                        step_count += 1
-
-                        # Value loss for integers
-                        try:
-                            int_val = int(target_value)
-                            if 0 <= int_val <= 20:  # Within our int range
-                                target_int = torch.tensor([int_val], device=device)
-                                int_loss = F.cross_entropy(lit_output["int_value"] / temperature, target_int)
-                                step_loss = step_loss + int_loss
-                                total_literal_loss = total_literal_loss + int_loss
-                                step_count += 1
-                        except ValueError:
-                            pass
-
-                    elif terminal_type == "STRING":
-                        target_type = torch.tensor([1], device=device)  # string type
-                        type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
-                        step_loss = step_loss + type_loss
-                        step_count += 1
-
-                    elif terminal_type in ["TRUE", "FALSE"]:
-                        target_type = torch.tensor([2], device=device)  # bool type
-                        type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
-                        step_loss = step_loss + type_loss
-
-                        # Value loss for booleans
-                        bool_val = 1 if target_value == "True" else 0
-                        target_bool = torch.tensor([bool_val], device=device)
-                        bool_loss = F.cross_entropy(lit_output["bool_value"] / temperature, target_bool)
-                        step_loss = step_loss + bool_loss
-                        total_literal_loss = total_literal_loss + bool_loss
-                        step_count += 1
-
-            if isinstance(step_loss, torch.Tensor):
-                batch_losses.append(step_loss.item() if step_count > 0 else 0.0)
-            else:
-                batch_losses.append(float(step_loss) if step_count > 0 else 0.0)
-            total_steps += step_count
-
-            # except Exception as e:
-            #     # Handle parsing errors gracefully
-            #     batch_losses.append(0.0)
-            #     continue
+                loss, step_count, production_loss, identifier_loss, literal_loss = self.compute_sequence_loss_single(
+                    hidden_state,
+                    tokens,
+                    temperature
+                )
+                batch_losses.append(loss)
+                total_production_loss = torch.add(total_production_loss, production_loss)
+                total_identifier_loss = torch.add(total_identifier_loss, identifier_loss)
+                total_literal_loss = torch.add(total_literal_loss, literal_loss)
+                total_steps += step_count
 
         # Average losses
         if total_steps > 0:
@@ -967,9 +993,9 @@ class GrammarAwareGenerationHead(nn.Module):
             avg_identifier_loss = total_identifier_loss / max(1, total_steps // 4)  # Fewer identifier steps
             avg_literal_loss = total_literal_loss / max(1, total_steps // 4)  # Fewer literal steps
         else:
-            avg_production_loss = torch.tensor(0.0, device=device, requires_grad=True)
-            avg_identifier_loss = torch.tensor(0.0, device=device, requires_grad=True)
-            avg_literal_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            avg_production_loss = torch.tensor(0.0, device=device)
+            avg_identifier_loss = torch.tensor(0.0, device=device)
+            avg_literal_loss = torch.tensor(0.0, device=device)
 
         # Combined loss
         total_loss = avg_production_loss + avg_identifier_loss + avg_literal_loss
