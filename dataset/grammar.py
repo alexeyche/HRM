@@ -391,82 +391,57 @@ def parse_tokens_to_productions(tokens: List[str], grammar: CFG) -> Tuple[List[T
     if not production_sequence:
         raise ValueError(f"Failed to extract production sequence from parse tree for tokens {tokens}")
 
-    # Build terminal requirements with context tracking
+    # Build terminal requirements with simplified context tracking
     def build_terminal_requirements_with_context(tokens: List[str]) -> List[Tuple[str, str, Optional[List[str]]]]:
-        """Build terminal requirements with identifier context tracking."""
+        """Build terminal requirements with simplified, deterministic identifier context tracking."""
         terminal_requirements = []
-        identifier_context = []  # Track identifiers in scope
-        
-        # Context tracking state
-        in_function_params = False
-        in_assignment_target = False
-        paren_depth = 0
-        
-        i = 0
-        while i < len(tokens):
-            token = tokens[i]
+        identifier_context = []  # Track identifiers as they are defined
+
+        # Simplified approach: scan tokens sequentially and detect definitions
+        # This is more deterministic than trying to track complex parsing state
+        for i, token in enumerate(tokens):
             terminal_type = classify_token(token)
-            
+
             if terminal_type == "UNKNOWN":
                 raise ValueError(f"Unknown terminal type for token '{token}'. This token is not "
                                f"recognized by the grammar's token patterns.")
-            
-            # Context tracking logic
+
             current_context = None
             if terminal_type == "VARIABLE":
-                # For variables, provide current context
-                current_context = list(identifier_context)  # Copy current context
-                
-                # Determine if this is a new identifier definition or usage
+                # Always provide current context for variables
+                current_context = list(identifier_context)
+
+                # Simple definition detection: check common patterns
                 is_definition = False
-                
-                # Check if we're in function parameters
-                if in_function_params:
+
+                # Pattern 1: Assignment - var = value
+                if i + 1 < len(tokens) and tokens[i + 1] == "=":
                     is_definition = True
-                
-                # Check if we're in assignment target (left side of =)
-                elif in_assignment_target:
+
+                # Pattern 2: Function parameter - def func(var) or func(var1, var2)
+                elif (i > 0 and tokens[i - 1] in ["(", ","]):
+                    # Check if we're in a function definition context
+                    # Look backwards for 'def' keyword within reasonable distance
+                    for j in range(max(0, i - 10), i):
+                        if tokens[j] == "def":
+                            is_definition = True
+                            break
+
+                # Pattern 3: for loop variable - for var in ...
+                elif i > 0 and tokens[i - 1] == "for":
                     is_definition = True
-                
-                # Look ahead for assignment patterns: VARIABLE = ...
-                elif i + 1 < len(tokens) and tokens[i + 1] == "=":
+                elif i > 1 and tokens[i - 2] == "for" and tokens[i - 1] in [" ", ""]:
                     is_definition = True
-                    
-                # Look for for-loop variable: for VARIABLE in ...
-                elif (i >= 1 and tokens[i - 1] == "for") or (i >= 2 and tokens[i - 2] == "for" and tokens[i - 1] == " "):
-                    is_definition = True
-                
-                # If this is a definition, add to context for future tokens
+
+                # Add to context if this is a definition and not already present
                 if is_definition and token not in identifier_context:
                     identifier_context.append(token)
-                    
-            # Update context tracking state based on current token
-            if token == "(":
-                paren_depth += 1
-                # Check if this starts function parameters
-                if i > 0 and tokens[i - 1] not in ["if", "while", "for"]:  # Not control structure
-                    # Look backwards for function definition pattern: def FUNCTION_NAME (
-                    if i >= 2 and tokens[i - 2] == "def":
-                        in_function_params = True
-                        
-            elif token == ")":
-                paren_depth -= 1
-                if paren_depth == 0:
-                    in_function_params = False
-                    
-            elif token == "=":
-                # Next variable might be assignment target
-                in_assignment_target = True
-                
-            elif token in ["<NEWLINE>", ":", ";"]:
-                in_assignment_target = False
-                
+
             # Add terminal requirement with context
             terminal_requirements.append((terminal_type, token, current_context))
-            i += 1
-            
+
         return terminal_requirements
-    
+
     terminal_requirements = build_terminal_requirements_with_context(tokens)
     return production_sequence, terminal_requirements
 

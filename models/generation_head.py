@@ -5,7 +5,7 @@ This module implements a grammar-constrained generation head that produces
 syntactically valid Python code by expanding NLTK CFG productions.
 """
 
-from typing import Dict, List, Optional, Tuple, Union, Set
+from typing import Dict, List, Optional, Tuple, Union, Set, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -108,68 +108,68 @@ class IdentifierHead(nn.Module):
         self.vocab_size = vocab_size  # a-z for simple identifiers
         self.max_identifiers = max_identifiers
 
-        # Generation head for new identifiers
-        self.gen_proj = nn.Linear(hidden_dim, vocab_size)
-
-        # Improved copy mechanism components
-        # Copy gate takes into account both hidden state AND context availability
-        self.copy_gate = nn.Linear(hidden_dim + 1, 1)  # +1 for context_available feature
+        # Simplified copy mechanism: single unified approach
+        # Instead of separate copy gate + copy attention + generation, 
+        # use a single classifier over all possible choices
         
-        # Simpler copy attention - just project hidden state to attention scores
-        self.copy_attention = nn.Linear(hidden_dim, max_identifiers)
+        # The choices are: 26 generation options (a-z) + max_identifiers copy options
+        total_choices = vocab_size + max_identifiers  # 26 chars + copy slots
+        self.unified_classifier = nn.Linear(hidden_dim, total_choices)
         
-        # Embedding layer for identifier characters (learnable embeddings)
+        # Simple embedding for context identifiers (for attention if needed)
         self.identifier_embedding = nn.Embedding(vocab_size, hidden_dim)
 
     def forward(self, hidden_state: torch.Tensor, context_identifiers: Optional[List[str]] = None) -> Dict[str, torch.Tensor]:
         """
-        Predict identifier - either generate new or copy existing.
+        Simplified identifier prediction using unified classifier.
 
         Args:
             hidden_state: Context embeddings (batch_size, hidden_dim)
             context_identifiers: List of identifiers currently in scope
 
         Returns:
-            Dictionary with generation, copy gate, and copy attention logits
+            Dictionary with unified logits and choice mapping information
         """
         batch_size = hidden_state.size(0)
         device = hidden_state.device
 
-        # Generation logits for new identifiers
-        gen_logits = self.gen_proj(hidden_state)  # (batch_size, vocab_size)
-
-        # Enhanced copy gate - considers context size and availability  
+        # Get unified logits for all choices
+        all_logits = self.unified_classifier(hidden_state)  # (batch_size, total_choices)
+        
+        # Split into generation and copy parts
+        generation_logits = all_logits[:, :self.vocab_size]  # First 26 are a-z
+        copy_logits = all_logits[:, self.vocab_size:]  # Rest are copy slots
+        
+        # Mask unavailable copy slots
         num_available = len(context_identifiers) if context_identifiers else 0
-        # Normalize context size to [0, 1] range to avoid bias
-        context_feature = torch.full((batch_size, 1), min(num_available / 5.0, 1.0), device=device)
-        copy_gate_input = torch.cat([hidden_state, context_feature], dim=1)
-        copy_gate_logits = self.copy_gate(copy_gate_input)  # (batch_size, 1)
-
-        # Improved copy attention - simpler and more direct
-        if context_identifiers and len(context_identifiers) > 0:
-            num_identifiers = len(context_identifiers)
-            
-            # Get attention scores for available identifiers
-            attention_logits = self.copy_attention(hidden_state)  # (batch_size, max_identifiers)
-            
-            # Only keep logits for actual identifiers
-            copy_attention_logits = attention_logits[:, :num_identifiers]  # (batch_size, num_identifiers)
+        if num_available > 0:
+            # Only keep logits for available identifiers
+            available_copy_logits = copy_logits[:, :num_available]
+            # Mask unused slots with -inf
+            if num_available < self.max_identifiers:
+                mask = torch.full((batch_size, self.max_identifiers - num_available), 
+                                float('-inf'), device=device)
+                copy_logits = torch.cat([available_copy_logits, mask], dim=1)
+            else:
+                copy_logits = available_copy_logits
         else:
-            # No identifiers to copy from
-            copy_attention_logits = torch.zeros(batch_size, 0, device=device)
+            # No identifiers available - mask all copy logits
+            copy_logits = torch.full((batch_size, self.max_identifiers), 
+                                   float('-inf'), device=device)
 
         return {
-            "generation": gen_logits,
-            "copy_gate": copy_gate_logits,
-            "copy_attention": copy_attention_logits,
-            "available_identifiers": context_identifiers or []
+            "generation": generation_logits,
+            "copy": copy_logits, 
+            "unified": all_logits,
+            "available_identifiers": context_identifiers or [],
+            "num_available": num_available
         }
 
     # Removed old embedding method - now using learnable embeddings
 
     def sample_identifier(self, logits_dict: Dict[str, torch.Tensor], temperature: float = 1.0) -> List[str]:
         """
-        Sample an identifier from the logits.
+        Sample an identifier using simplified unified approach.
 
         Args:
             logits_dict: Output from forward pass
@@ -178,26 +178,27 @@ class IdentifierHead(nn.Module):
         Returns:
             List of sampled identifier strings (one per batch item)
         """
-        batch_size = logits_dict["generation"].size(0)
+        batch_size = logits_dict["unified"].size(0)
         results = []
+        available_identifiers = logits_dict["available_identifiers"]
+        num_available = logits_dict["num_available"]
 
         for i in range(batch_size):
-            copy_gate_prob = torch.sigmoid(logits_dict["copy_gate"][i])
+            # Sample from unified distribution
+            unified_probs = F.softmax(logits_dict["unified"][i] / temperature, dim=0)
+            choice_idx = torch.multinomial(unified_probs, 1).item()
 
-            # Decide whether to copy or generate
-            if (copy_gate_prob > 0.5 and
-                len(logits_dict["available_identifiers"]) > 0 and
-                logits_dict["copy_attention"].size(1) > 0):
-
-                # Copy from available identifiers
-                copy_probs = F.softmax(logits_dict["copy_attention"][i] / temperature, dim=0)
-                copy_idx = torch.multinomial(copy_probs, 1).item()
-                results.append(logits_dict["available_identifiers"][copy_idx])
+            if choice_idx < self.vocab_size:
+                # Generate new identifier (a-z)
+                results.append(chr(ord('a') + choice_idx))
             else:
-                # Generate new identifier
-                gen_probs = F.softmax(logits_dict["generation"][i] / temperature, dim=0)
-                gen_idx = torch.multinomial(gen_probs, 1).item()
-                results.append(chr(ord('a') + gen_idx))
+                # Copy existing identifier
+                copy_idx = choice_idx - self.vocab_size
+                if copy_idx < num_available:
+                    results.append(available_identifiers[copy_idx])
+                else:
+                    # Fallback - generate 'a' if invalid copy index
+                    results.append('a')
 
         return results
 
@@ -819,15 +820,16 @@ class GrammarAwareGenerationHead(nn.Module):
         hidden_state: torch.Tensor,
         tokens: List[str],
         temperature: float = 1.0
-    ) -> Tuple[float, int, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[float, Tuple[int, int, int, int], torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         device = hidden_state.device
         if not tokens:
             return (
                 0.0,
-                0,
+                (0, 0, 0, 0),  # (total_steps, production_steps, identifier_steps, literal_steps)
                 torch.tensor(0.0, device=device),
                 torch.tensor(0.0, device=device),
-                torch.tensor(0.0, device=device)
+                torch.tensor(0.0, device=device),
+                {}  # Empty debug info
             )
 
         production_loss = torch.tensor(0.0, device=device)
@@ -839,7 +841,20 @@ class GrammarAwareGenerationHead(nn.Module):
         production_sequence, terminal_requirements = parse_tokens_to_productions(tokens, self.grammar)
 
         step_loss = torch.tensor(0.0, device=device)
-        step_count = 0
+        production_steps = 0
+        identifier_steps = 0
+        literal_steps = 0
+        
+        # Debug info tracking
+        debug_info = {
+            "copy_decisions": [],  # List of (should_copy, target_value, context_size)
+            "copy_gate_losses": [],  # List of copy gate loss values
+            "copy_attention_losses": [],  # List of copy attention loss values
+            "generation_losses": [],  # List of generation loss values
+            "identifiers_processed": 0,
+            "copy_attempts": 0,
+            "generation_attempts": 0,
+        }
 
         # Compute loss for each production decision
         for prod_idx, (nonterminal, target_prod_idx) in enumerate(production_sequence):
@@ -855,7 +870,7 @@ class GrammarAwareGenerationHead(nn.Module):
 
             step_loss = torch.add(step_loss, prod_loss)
             production_loss = torch.add(production_loss, prod_loss)
-            step_count += 1
+            production_steps += 1
 
         # Compute loss for terminal value predictions using proper context from parsing
         for terminal_requirement in terminal_requirements:
@@ -873,44 +888,49 @@ class GrammarAwareGenerationHead(nn.Module):
                 id_output = self.identifier_head(hidden_state, context_identifiers)
 
                 if target_value and len(target_value) == 1 and target_value.islower():
-                    # Determine if we should copy (identifier exists) or generate (new identifier)
+                    # Simplified unified approach - single loss calculation
                     should_copy = target_value in context_identifiers
+                    debug_info["identifiers_processed"] += 1
+                    debug_info["copy_decisions"].append((should_copy, target_value, len(context_identifiers)))
 
-                    # Copy gate loss - train to make correct copy/generate decision
-                    copy_gate_target = torch.tensor([1.0 if should_copy else 0.0], device=device)
-                    copy_gate_logit = id_output["copy_gate"].squeeze(-1)  # Remove last dim
-                    copy_gate_loss = F.binary_cross_entropy_with_logits(
-                        copy_gate_logit / temperature, copy_gate_target
-                    )
-                    step_loss = torch.add(step_loss, copy_gate_loss)
-                    identifier_loss = torch.add(identifier_loss, copy_gate_loss)
-                    step_count += 1
-
+                    # Calculate target index in unified classifier
                     if should_copy and len(context_identifiers) > 0:
-                        # Copy attention loss - train to select correct identifier
+                        # Target is a copy operation
                         try:
                             copy_target_idx = context_identifiers.index(target_value)
-                            copy_target_tensor = torch.tensor([copy_target_idx], device=device)
-                            copy_attention_loss = F.cross_entropy(
-                                id_output["copy_attention"] / temperature, copy_target_tensor
-                            )
-                            step_loss = torch.add(step_loss, copy_attention_loss)
-                            identifier_loss = torch.add(identifier_loss, copy_attention_loss)
-                            step_count += 1
+                            # Index in unified classifier = vocab_size + copy_index
+                            unified_target_idx = self.identifier_head.vocab_size + copy_target_idx
+                            debug_info["copy_attempts"] += 1
                         except (ValueError, IndexError):
-                            # Target not in context or index error, skip copy attention loss
-                            pass
+                            # Fallback to generation if target not found in context
+                            target_char_idx = ord(target_value.lower()) - ord('a')
+                            unified_target_idx = target_char_idx
+                            debug_info["generation_attempts"] += 1
                     else:
-                        # Generation loss - train character generation for new identifiers
+                        # Target is a generation operation (a-z)
                         target_char_idx = ord(target_value.lower()) - ord('a')
                         if 0 <= target_char_idx < 26:
-                            target_tensor = torch.tensor([target_char_idx], device=device)
-                            gen_loss = F.cross_entropy(id_output["generation"] / temperature, target_tensor)
-                            step_loss = torch.add(step_loss, gen_loss)
-                            identifier_loss = torch.add(identifier_loss, gen_loss)
-                            step_count += 1
+                            unified_target_idx = target_char_idx
+                            debug_info["generation_attempts"] += 1
+                        else:
+                            # Invalid character, skip
+                            continue
 
-                    # Context is now properly managed by the parsing phase
+                    # Single unified loss calculation
+                    target_tensor = torch.tensor([unified_target_idx], device=device)
+                    unified_loss = F.cross_entropy(
+                        id_output["unified"] / temperature, target_tensor
+                    )
+                    
+                    # Record loss for debugging
+                    if should_copy:
+                        debug_info["copy_attention_losses"].append(unified_loss.item())
+                    else:
+                        debug_info["generation_losses"].append(unified_loss.item())
+                    
+                    step_loss = torch.add(step_loss, unified_loss)
+                    identifier_loss = torch.add(identifier_loss, unified_loss)
+                    identifier_steps += 1
 
             elif terminal_type in ["DIGIT", "STRING", "TRUE", "FALSE"]:
                 # Literal loss
@@ -921,7 +941,8 @@ class GrammarAwareGenerationHead(nn.Module):
                     target_type = torch.tensor([0], device=device)  # int type
                     type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
                     step_loss = torch.add(step_loss, type_loss)
-                    step_count += 1
+                    literal_loss = torch.add(literal_loss, type_loss)
+                    literal_steps += 1
 
                     # Value loss for integers
                     try:
@@ -931,7 +952,7 @@ class GrammarAwareGenerationHead(nn.Module):
                             int_loss = F.cross_entropy(lit_output["int_value"] / temperature, target_int)
                             step_loss = torch.add(step_loss, int_loss)
                             literal_loss = torch.add(literal_loss, int_loss)
-                            step_count += 1
+                            literal_steps += 1
                     except ValueError:
                         pass
 
@@ -939,12 +960,15 @@ class GrammarAwareGenerationHead(nn.Module):
                     target_type = torch.tensor([1], device=device)  # string type
                     type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
                     step_loss = torch.add(step_loss, type_loss)
-                    step_count += 1
+                    literal_loss = torch.add(literal_loss, type_loss)
+                    literal_steps += 1
 
                 elif terminal_type in ["TRUE", "FALSE"]:
                     target_type = torch.tensor([2], device=device)  # bool type
                     type_loss = F.cross_entropy(lit_output["type"] / temperature, target_type)
                     step_loss = torch.add(step_loss, type_loss)
+                    literal_loss = torch.add(literal_loss, type_loss)
+                    literal_steps += 1
 
                     # Value loss for booleans
                     bool_val = 1 if target_value == "True" else 0
@@ -952,14 +976,15 @@ class GrammarAwareGenerationHead(nn.Module):
                     bool_loss = F.cross_entropy(lit_output["bool_value"] / temperature, target_bool)
                     step_loss = torch.add(step_loss, bool_loss)
                     literal_loss = torch.add(literal_loss, bool_loss)
-                    step_count += 1
+                    literal_steps += 1
 
+        total_steps = production_steps + identifier_steps + literal_steps
         loss = 0.0
         if isinstance(step_loss, torch.Tensor):
-            loss = step_loss.item() if step_count > 0 else 0.0
+            loss = step_loss.item() if total_steps > 0 else 0.0
         else:
-            loss = float(step_loss) if step_count > 0 else 0.0
-        return loss, step_count, production_loss, identifier_loss, literal_loss
+            loss = float(step_loss) if total_steps > 0 else 0.0
+        return loss, (total_steps, production_steps, identifier_steps, literal_steps), production_loss, identifier_loss, literal_loss, debug_info
 
     def compute_sequence_loss(
         self,
@@ -986,6 +1011,22 @@ class GrammarAwareGenerationHead(nn.Module):
         total_identifier_loss = torch.tensor(0.0, device=device)
         total_literal_loss = torch.tensor(0.0, device=device)
         total_steps = 0
+        production_step_count = 0
+        identifier_step_count = 0
+        literal_step_count = 0
+        
+        # Aggregate debug info across batch
+        batch_debug_info = {
+            "total_identifiers_processed": 0,
+            "total_copy_attempts": 0,
+            "total_generation_attempts": 0,
+            "copy_decisions_summary": {"copy": 0, "generate": 0},
+            "avg_copy_gate_loss": 0.0,
+            "avg_copy_attention_loss": 0.0, 
+            "avg_generation_loss": 0.0,
+            "context_size_distribution": [],
+        }
+        all_debug_infos = []  # Collect all debug info from samples
 
         if use_batch:
             raise NotImplementedError("Batch loss computation is not implemented yet")
@@ -997,7 +1038,7 @@ class GrammarAwareGenerationHead(nn.Module):
                 hidden_state = context_embeddings[batch_idx:batch_idx+1, -1, :]
                 tokens = target_tokens[batch_idx]
 
-                loss, step_count, production_loss, identifier_loss, literal_loss = self.compute_sequence_loss_single(
+                loss, step_counts, production_loss, identifier_loss, literal_loss, single_debug_info = self.compute_sequence_loss_single(
                     hidden_state,
                     tokens,
                     temperature
@@ -1006,29 +1047,103 @@ class GrammarAwareGenerationHead(nn.Module):
                 total_production_loss = torch.add(total_production_loss, production_loss)
                 total_identifier_loss = torch.add(total_identifier_loss, identifier_loss)
                 total_literal_loss = torch.add(total_literal_loss, literal_loss)
-                total_steps += step_count
+                total_steps += step_counts[0]  # Total steps
+                production_step_count += step_counts[1]  # Production steps
+                identifier_step_count += step_counts[2]  # Identifier steps  
+                literal_step_count += step_counts[3]  # Literal steps
+                
+                # Collect all debug info
+                all_debug_infos.append(single_debug_info)
+                
+                # Aggregate debug info
+                batch_debug_info["total_identifiers_processed"] += single_debug_info["identifiers_processed"]
+                batch_debug_info["total_copy_attempts"] += single_debug_info["copy_attempts"] 
+                batch_debug_info["total_generation_attempts"] += single_debug_info["generation_attempts"]
+                
+                # Count copy vs generate decisions
+                for should_copy, _, context_size in single_debug_info["copy_decisions"]:
+                    if should_copy:
+                        batch_debug_info["copy_decisions_summary"]["copy"] += 1
+                    else:
+                        batch_debug_info["copy_decisions_summary"]["generate"] += 1
+                    batch_debug_info["context_size_distribution"].append(context_size)
 
-        # Average losses
-        if total_steps > 0:
-            avg_production_loss = total_production_loss / total_steps
-            # Proper averaging: divide by the actual number of loss contributions
-            # Identifier and literal losses are accumulated per terminal, so we normalize by total steps
-            avg_identifier_loss = total_identifier_loss / total_steps
-            avg_literal_loss = total_literal_loss / total_steps
+        # Fixed averaging: use proper step counts for each loss type
+        if production_step_count > 0:
+            avg_production_loss = total_production_loss / production_step_count
         else:
             avg_production_loss = torch.tensor(0.0, device=device)
+            
+        if identifier_step_count > 0:
+            avg_identifier_loss = total_identifier_loss / identifier_step_count
+        else:
             avg_identifier_loss = torch.tensor(0.0, device=device)
+            
+        if literal_step_count > 0:
+            avg_literal_loss = total_literal_loss / literal_step_count
+        else:
             avg_literal_loss = torch.tensor(0.0, device=device)
 
-        # Combined loss
-        total_loss = avg_production_loss + avg_identifier_loss + avg_literal_loss
+        # Loss balancing to prevent any component from dominating
+        # Apply adaptive weighting based on relative magnitudes
+        loss_weights = [1.0, 1.0, 1.0]  # Default equal weights
+        
+        # Calculate adaptive weights based on current loss magnitudes
+        # This helps prevent any one loss from dominating training
+        if production_step_count > 0 and identifier_step_count > 0:
+            # Production vs Identifier balancing
+            prod_magnitude = avg_production_loss.item()
+            id_magnitude = avg_identifier_loss.item()
+            
+            # If identifier loss is much smaller, increase its weight
+            if prod_magnitude > 0 and id_magnitude > 0:
+                ratio = prod_magnitude / id_magnitude
+                if ratio > 2.0:  # Production loss is much larger
+                    loss_weights[1] = min(3.0, ratio / 2.0)  # Boost identifier loss weight
+                elif ratio < 0.5:  # Identifier loss is much larger
+                    loss_weights[0] = min(3.0, (1.0 / ratio) / 2.0)  # Boost production loss weight
+        
+        # Apply gradient clipping per component to prevent instability
+        max_component_loss = 5.0  # Maximum allowed loss for any component
+        clipped_production_loss = torch.clamp(avg_production_loss, max=max_component_loss)
+        clipped_identifier_loss = torch.clamp(avg_identifier_loss, max=max_component_loss)
+        clipped_literal_loss = torch.clamp(avg_literal_loss, max=max_component_loss)
+        
+        # Weighted and clipped combined loss
+        total_loss = (loss_weights[0] * clipped_production_loss + 
+                     loss_weights[1] * clipped_identifier_loss + 
+                     loss_weights[2] * clipped_literal_loss)
+        
+        # Calculate average debug losses for reporting
+        all_copy_gate_losses = []
+        all_copy_attention_losses = []
+        all_generation_losses = []
+        
+        for single_debug in all_debug_infos:  # Use all collected debug info
+            all_copy_gate_losses.extend(single_debug.get("copy_gate_losses", []))
+            all_copy_attention_losses.extend(single_debug.get("copy_attention_losses", []))
+            all_generation_losses.extend(single_debug.get("generation_losses", []))
+        
+        batch_debug_info["avg_copy_gate_loss"] = sum(all_copy_gate_losses) / max(1, len(all_copy_gate_losses))
+        batch_debug_info["avg_copy_attention_loss"] = sum(all_copy_attention_losses) / max(1, len(all_copy_attention_losses))
+        batch_debug_info["avg_generation_loss"] = sum(all_generation_losses) / max(1, len(all_generation_losses))
 
         return {
             "total_loss": total_loss,
             "production_loss": avg_production_loss,
             "identifier_loss": avg_identifier_loss,
             "literal_loss": avg_literal_loss,
+            "clipped_production_loss": clipped_production_loss,
+            "clipped_identifier_loss": clipped_identifier_loss,
+            "clipped_literal_loss": clipped_literal_loss,
+            "production_weight": torch.tensor(loss_weights[0], device=device),
+            "identifier_weight": torch.tensor(loss_weights[1], device=device),
+            "literal_weight": torch.tensor(loss_weights[2], device=device),
             "batch_losses": torch.tensor(batch_losses, device=device),
             "total_steps": torch.tensor(total_steps, device=device),
-            "avg_loss_per_step": total_loss / max(1, total_steps) if total_steps > 0 else torch.tensor(0.0, device=device)
+            "production_steps": torch.tensor(production_step_count, device=device),
+            "identifier_steps": torch.tensor(identifier_step_count, device=device),
+            "literal_steps": torch.tensor(literal_step_count, device=device),
+            "avg_loss_per_step": total_loss / max(1, total_steps) if total_steps > 0 else torch.tensor(0.0, device=device),
+            "debug_info": batch_debug_info
         }
