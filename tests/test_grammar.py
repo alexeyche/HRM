@@ -41,10 +41,10 @@ def test_tokenize_all_programs():
         program = registry.get(program_name)
         assert program is not None
 
-        log.info(f"Parsing program {program_name}: \n{program.implementation}")
+        # log.info(f"Parsing program {program_name}: \n{program.implementation}")
 
         tokens = tokenize_code(program.implementation)
-        log.info(f"Tokens: {tokens}")
+        # log.info(f"Tokens: {tokens}")
         assert len(tokens) > 0, f"Program {program_name} has no tokens"
 
 

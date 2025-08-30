@@ -874,16 +874,9 @@ class GrammarAwareGenerationHead(nn.Module):
 
         # Compute loss for terminal value predictions using proper context from parsing
         for terminal_requirement in terminal_requirements:
-            # TODO: fix this odd thing
-            # Handle both old format (terminal_type, target_value) and new format (terminal_type, target_value, context)
-            if len(terminal_requirement) == 3:
-                terminal_type, target_value, context_identifiers = terminal_requirement
-                # Use the context from parsing, or empty list if None
-                context_identifiers = context_identifiers or []
-            else:
-                # Fallback to old format
-                terminal_type, target_value = terminal_requirement
-                context_identifiers = []
+            terminal_type, target_value, context_identifiers = terminal_requirement
+            # Use the context from parsing, or empty list if None
+            context_identifiers = context_identifiers or []
             if terminal_type == "VARIABLE":
                 # Identifier loss with proper copy mechanism training
                 id_output = self.identifier_head(hidden_state, context_identifiers)
