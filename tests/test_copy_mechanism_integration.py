@@ -51,25 +51,24 @@ class TestCopyMechanismIntegration:
                 should_copy = target_value in context_identifiers
                 copy_decisions.append(should_copy)
 
-                # Copy gate loss
-                copy_gate_target = torch.tensor([1.0 if should_copy else 0.0], device=device)
-                copy_gate_logit = id_output["copy_gate"].squeeze(-1)
-                copy_gate_loss = F.binary_cross_entropy_with_logits(copy_gate_logit, copy_gate_target)
-                total_loss = total_loss + copy_gate_loss
-
+                # Unified classifier loss - combines copy and generation decisions
                 if should_copy and len(context_identifiers) > 0:
-                    # Copy attention loss
+                    # Copy: target is at copy index in unified output (first 10 slots)
                     copy_target_idx = context_identifiers.index(target_value)
-                    copy_target_tensor = torch.tensor([copy_target_idx], device=device)
-                    copy_attention_loss = F.cross_entropy(id_output["copy_attention"], copy_target_tensor)
-                    total_loss = total_loss + copy_attention_loss
+                    target_tensor = torch.tensor([copy_target_idx], device=device)
                 else:
-                    # Generation loss
+                    # Generate: target is at generation index in unified output (slots 10-35)
                     target_char_idx = ord(target_value.lower()) - ord('a')
                     if 0 <= target_char_idx < 26:
-                        target_tensor = torch.tensor([target_char_idx], device=device)
-                        gen_loss = F.cross_entropy(id_output["generation"], target_tensor)
-                        total_loss = total_loss + gen_loss
+                        # Generation indices start at slot 10 (max_identifiers)
+                        generation_start = 10  # max_identifiers
+                        target_tensor = torch.tensor([generation_start + target_char_idx], device=device)
+                    else:
+                        continue  # Skip invalid targets
+                
+                # Single cross-entropy loss over unified vocabulary
+                unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
+                total_loss = total_loss + unified_loss
 
         # Verify the copy decisions are correct
         expected_decisions = [False, False, True, False, True]  # Generate, Generate, Copy, Generate, Copy
@@ -106,9 +105,10 @@ class TestCopyMechanismIntegration:
             if terminal_type == "VARIABLE":
                 id_output = gen_head.identifier_head(hidden_state, context_identifiers)
                 assert isinstance(id_output, dict)
-                assert "copy_gate" in id_output
-                assert "copy_attention" in id_output
-                assert "generation" in id_output
+                assert "unified" in id_output, "Unified classifier should have 'unified' output"
+                # Verify unified shape: fixed size = max_identifiers + generation_vocab_size
+                expected_size = 10 + 26  # max_identifiers + alphabet = 36
+                assert id_output["unified"].size(-1) == expected_size
 
     def test_context_evolution_pattern(self):
         """Test that context evolves properly during training."""
@@ -183,23 +183,16 @@ class TestCopyMechanismIntegration:
 
         assert should_copy == True
 
-        # Both copy gate and copy attention should be trained
-        copy_gate_target = torch.tensor([1.0], device=device)  # Should copy
-        copy_gate_logit = id_output["copy_gate"].squeeze(-1)
-        copy_gate_loss = F.binary_cross_entropy_with_logits(copy_gate_logit, copy_gate_target)
-
+        # Unified classifier should train on copy target
         copy_target_idx = context_identifiers.index(target_value)
         copy_target_tensor = torch.tensor([copy_target_idx], device=device)
-        copy_attention_loss = F.cross_entropy(id_output["copy_attention"], copy_target_tensor)
+        unified_loss = F.cross_entropy(id_output["unified"], copy_target_tensor)
 
-        assert isinstance(copy_gate_loss, torch.Tensor)
-        assert isinstance(copy_attention_loss, torch.Tensor)
-        assert copy_gate_loss.item() >= 0
-        assert copy_attention_loss.item() >= 0
+        assert isinstance(unified_loss, torch.Tensor)
+        assert unified_loss.item() >= 0
 
-        # Total loss should be combination
-        total_loss = copy_gate_loss + copy_attention_loss
-        assert total_loss.item() > 0
+        # Verify the unified loss is reasonable
+        assert unified_loss.item() > 0
 
     def test_generation_mechanism_training_signal(self):
         """Test that generation mechanism receives proper training signal."""
@@ -218,23 +211,18 @@ class TestCopyMechanismIntegration:
 
         assert should_copy == False
 
-        # Both copy gate and generation head should be trained
-        copy_gate_target = torch.tensor([0.0], device=device)  # Should generate
-        copy_gate_logit = id_output["copy_gate"].squeeze(-1)
-        copy_gate_loss = F.binary_cross_entropy_with_logits(copy_gate_logit, copy_gate_target)
-
+        # Unified classifier should train on generation target
         target_char_idx = ord(target_value.lower()) - ord('a')
-        target_tensor = torch.tensor([target_char_idx], device=device)
-        gen_loss = F.cross_entropy(id_output["generation"], target_tensor)
+        # Generation indices start at slot 10 (max_identifiers)
+        generation_start = 10  # max_identifiers
+        target_tensor = torch.tensor([generation_start + target_char_idx], device=device)
+        unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
 
-        assert isinstance(copy_gate_loss, torch.Tensor)
-        assert isinstance(gen_loss, torch.Tensor)
-        assert copy_gate_loss.item() >= 0
-        assert gen_loss.item() >= 0
+        assert isinstance(unified_loss, torch.Tensor)
+        assert unified_loss.item() >= 0
 
-        # Total loss should be combination
-        total_loss = copy_gate_loss + gen_loss
-        assert total_loss.item() > 0
+        # Verify the unified loss is reasonable
+        assert unified_loss.item() > 0
 
 
 class TestRegressionPrevention:
@@ -260,31 +248,23 @@ class TestRegressionPrevention:
 
             device = hidden_state.device
 
-            # Copy gate should always be trained
-            copy_gate_target = torch.tensor([1.0 if should_copy else 0.0], device=device)
-            copy_gate_logit = id_output["copy_gate"].squeeze(-1)
-            copy_gate_loss = F.binary_cross_entropy_with_logits(copy_gate_logit, copy_gate_target)
+            # Unified classifier should always be trained
+            if should_copy and context:
+                # Copy target: index in context (first 10 slots)
+                copy_target_idx = context.index(target)
+                target_tensor = torch.tensor([copy_target_idx], device=device)
+            else:
+                # Generation target: index at slot 10 + char_index (slots 10-35)
+                target_char_idx = ord(target.lower()) - ord('a')
+                generation_start = 10  # max_identifiers
+                target_tensor = torch.tensor([generation_start + target_char_idx], device=device)
+            
+            # Single unified loss
+            unified_loss = F.cross_entropy(id_output["unified"], target_tensor)
 
             # Backward pass to verify gradients
-            copy_gate_loss.backward(retain_graph=True)
-            assert hidden_state.grad is not None, "Copy gate should create gradients"
+            unified_loss.backward(retain_graph=True)
+            assert hidden_state.grad is not None, "Unified classifier should create gradients"
 
-            # Reset gradients
+            # Reset gradients for next iteration
             hidden_state.grad.zero_()
-
-            if should_copy and context:
-                # Copy attention should be trained
-                copy_target_idx = context.index(target)
-                copy_target_tensor = torch.tensor([copy_target_idx], device=device)
-                copy_attention_loss = F.cross_entropy(id_output["copy_attention"], copy_target_tensor)
-                copy_attention_loss.backward(retain_graph=True)
-                assert hidden_state.grad is not None, "Copy attention should create gradients"
-                hidden_state.grad.zero_()
-            else:
-                # Generation should be trained
-                target_char_idx = ord(target.lower()) - ord('a')
-                target_tensor = torch.tensor([target_char_idx], device=device)
-                gen_loss = F.cross_entropy(id_output["generation"], target_tensor)
-                gen_loss.backward(retain_graph=True)
-                assert hidden_state.grad is not None, "Generation should create gradients"
-                hidden_state.grad.zero_()
