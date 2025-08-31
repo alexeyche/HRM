@@ -1973,6 +1973,7 @@ dependencies = [
     { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "torch-geometric" },
+    { name = "torch-struct" },
     { name = "tqdm" },
     { name = "wandb" },
 ]
@@ -2016,6 +2017,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.1.0" },
     { name = "torch" },
     { name = "torch-geometric", specifier = ">=2.6.1" },
+    { name = "torch-struct", specifier = ">=0.5" },
     { name = "tqdm" },
     { name = "wandb" },
 ]
@@ -6187,6 +6189,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e8/81/e1b015494cb9e0bf4c47cc8426e49736120248733be0e22072a5628ae9ed/torch_geometric-2.6.1.tar.gz", hash = "sha256:1f18f9d0fc4d2239d526221e4f22606a4a3895b5d965a9856d27610a3df662c6", size = 771490 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/9f/157e913626c1acfb3b19ce000b1a6e4e4fb177c0bc0ea0c67ca5bd714b5a/torch_geometric-2.6.1-py3-none-any.whl", hash = "sha256:8faeb353f9655f7dbec44c5e0b44c721773bdfb279994da96b9b8b12fd30f427", size = 1135632 },
+]
+
+[[package]]
+name = "torch-struct"
+version = "0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f3/e1/bb2ad949a56c25014e1a7c0e2b0f5a7f670eff876fe733156afe2119eede/torch_struct-0.5.tar.gz", hash = "sha256:a40e234353f3b1a1df743100a781949b84b48877578340e77dc5066899c06495", size = 30369 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/8c/775b7e141f11d509d59d0d2d801337ff3ad0203bc1a40335ea83e1161ba7/torch_struct-0.5-py3-none-any.whl", hash = "sha256:9e4c4e5a2317d01cef47bfb0786b4ece6aebe1fa23f5f8a6a91887a3aab3d020", size = 34703 },
 ]
 
 [[package]]
